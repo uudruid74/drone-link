@@ -129,6 +129,9 @@ class McpServerTest {
         val call = res.getJSONObject("result")
         assertFalse(call.getBoolean("isError"))
         val text = call.getJSONArray("content").getJSONObject(0).getString("text")
+        // wire format: axes must be a real JSON array, not a quoted list string
+        assertTrue(text, text.contains("\"axes\":[128,128,0,128]"))
+        assertFalse(text, text.contains("\"axes\":\""))
         val st = JSONObject(text)
         assertEquals(false, st.getBoolean("connected"))
         assertEquals("TC(9B)", st.getString("variant"))

@@ -362,13 +362,24 @@ class McpServer(
         return out
     }
 
-    private fun toJson(map: Map<String, Any?>): JSONObject {
-        val o = JSONObject()
-        for ((k, v) in map) {
-            // JSON null must be an explicit NULL (putOpt would drop the key).
-            o.put(k, v ?: JSONObject.NULL)
+    /**
+     * Convert engine result values to JSON-safe types explicitly. Android's
+     * bundled org.json does NOT auto-convert Kotlin List/Map (it falls back
+     * to toString -> a quoted string); the Maven org.json on the JVM does,
+     * which is exactly the divergence this prevents.
+     */
+    private fun toJson(v: Any?): Any = when (v) {
+        null -> JSONObject.NULL
+        is Map<*, *> -> JSONObject().apply {
+            for ((k, value) in v) put(k.toString(), toJson(value))
         }
-        return o
+        is Iterable<*> -> JSONArray().apply {
+            for (item in v) put(toJson(item))
+        }
+        is Array<*> -> JSONArray().apply {
+            for (item in v) put(toJson(item))
+        }
+        else -> v
     }
 
     private fun success(id: Any?, result: JSONObject): String =
