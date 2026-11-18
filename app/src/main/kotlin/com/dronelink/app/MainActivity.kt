@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
             JoinState.CONNECTED -> "Joined: ${JoinStatus.detail}"
             JoinState.LOST -> "Lost: ${JoinStatus.detail}"
             JoinState.UNAVAILABLE -> "Unavailable: ${JoinStatus.detail}"
+            JoinState.KILLED -> "KILL SWITCH: ${JoinStatus.detail}"
         }
         tvNetwork.text = activeNetworkSummary()
     }

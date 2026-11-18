@@ -5,7 +5,8 @@
     <string name="channel_name">Drone join</string>
     <string name="notif_title">DroneLink: %1$s</string>
     <string name="notif_searching">requesting join…</string>
-    <string name="notif_connected">joined as secondary network %2$s, relay 127.0.0.1:17099</string>
+    <string name="notif_connected">joined as secondary network %2$s, MCP :8000</string>
+    <string name="notif_killed">KILL SWITCH engaged — MCP stopped until app restart</string>
     <string name="notif_lost">connection to %1$s lost</string>
     <string name="notif_unavailable">%1$s unavailable (no consent or timeout)</string>
 </resources>

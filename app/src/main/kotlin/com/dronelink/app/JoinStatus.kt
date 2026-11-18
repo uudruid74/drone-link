@@ -2,7 +2,7 @@ package com.dronelink.app
 
 import android.net.Network
 
-enum class JoinState { IDLE, REQUESTING, CONNECTED, LOST, UNAVAILABLE }
+enum class JoinState { IDLE, REQUESTING, CONNECTED, LOST, UNAVAILABLE, KILLED }
 
 /**
  * Process-wide join status. Written by DroneLinkService callbacks, read by

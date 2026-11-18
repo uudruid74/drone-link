@@ -12,8 +12,10 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.IBinder
+import com.dronelink.app.debug.DebugLog
 import com.dronelink.app.drone.DroneEngine
 import com.dronelink.app.drone.DroneNetworkTransport
+import com.dronelink.app.drone.TelemetryProbe
 import com.dronelink.app.mcp.McpServer
 
 /**
@@ -46,6 +48,8 @@ class DroneLinkService : Service() {
     private val transport = DroneNetworkTransport(this)
     private var engine: DroneEngine? = null
     private var mcp: McpServer? = null
+    // v0.3.0: rx:0 telemetry probe (passive fixed-port listeners).
+    private var probe: TelemetryProbe? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -113,14 +117,37 @@ class DroneLinkService : Service() {
                 JoinStatus.detail = "connected ${network}, mcp :8000"
                 JoinStatus.joinedNetwork = network
                 transport.network = network
+                DebugLog.log("service", "drone network available: $network")
+                // v0.3.0: autonomous heartbeat — starts with the service, NOT
+                // gated behind an MCP connect. Suspect #1 for rx:0 (no
+                // telemetry ever came back): without this, nothing was sent to
+                // the drone until an agent called a tool.
+                try {
+                    engine?.bindAndStartAutonomous()
+                    DebugLog.log("heartbeat", "autonomous heartbeat started (1Hz 01 01)")
+                } catch (e: Exception) {
+                    DebugLog.log("service", "autonomous heartbeat failed: ${e.message}")
+                }
+                // Passive telemetry probe on candidate fixed ports.
+                try {
+                    val p = TelemetryProbe(this@DroneLinkService, network)
+                    p.start()
+                    probe = p
+                    DebugLog.log("probe", "listening on ${p.listeningPorts}")
+                } catch (e: Exception) {
+                    DebugLog.log("service", "telemetry probe failed: ${e.message}")
+                }
                 updateNotification(getString(R.string.notif_connected, ssid, network.toString()))
             }
 
             override fun onLost(network: Network) {
                 transport.network = null
+                probe?.stop()
+                probe = null
                 JoinStatus.state = JoinState.LOST
                 JoinStatus.detail = "lost ${network}"
                 JoinStatus.joinedNetwork = null
+                DebugLog.log("service", "drone network lost: $network")
                 updateNotification(getString(R.string.notif_lost, ssid))
             }
 
@@ -165,9 +192,24 @@ class DroneLinkService : Service() {
         nm.notify(NOTIF_ID, buildNotification(text))
     }
 
+    /**
+     * v0.3.0: emergency_land kill switch — the MCP server stops until the app
+     * restarts. Called by the MCP server after it executes emergency_land.
+     */
+    fun onEmergencyLand() {
+        DebugLog.log("service", "emergency_land kill switch — stopping MCP server")
+        mcp?.stop()
+        mcp = null
+        JoinStatus.state = JoinState.KILLED
+        JoinStatus.detail = "kill switch engaged — MCP stopped until app restart"
+        updateNotification(getString(R.string.notif_killed))
+    }
+
     override fun onDestroy() {
         mcp?.stop()
-        engine?.disconnect()
+        engine?.shutdown()
+        probe?.stop()
+        probe = null
         mcp = null
         engine = null
         val cb = callback
