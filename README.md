@@ -2,33 +2,63 @@
 
 Tiny Android app: joins the drone WiFi as a **local-only secondary connection**
 via `WifiNetworkSpecifier`, so the phone keeps cellular internet + tailnet while
-the drone is connected. Plan C per `SagerNet/plans/plan-c-dronelink-app.md`.
+the drone is connected. The drone control engine and the MCP server live **in
+the app** (v0.2) — no Termux, no relay, no laptop Python.
 
-## Mechanism
+## Architecture (v0.2)
 
 - `DroneLinkService` (ForegroundService, type `connectedDevice`) holds a
   `NetworkRequest` with `WifiNetworkSpecifier` for the drone SSID (open/owe).
   The system shows one consent panel per join — one human tap, then the request
   stays held while the service runs.
 - Cellular stays the default network; the drone network comes up as secondary.
-  No hijack, no cellular PDN dormancy.
-- **App-scoped network** (verified by Gopher): only DroneLink's process can use
-  the joined network. So the app runs a localhost UDP relay:
-  `127.0.0.1:17099` → `192.168.1.1:7099` via `network.bindSocket()` on the
-  specifier network, replies relayed back to the last local sender. The Termux
-  daemon targets the relay (one-line change, coordinate with Gopher).
+  The service holds a `TRANSPORT_CELLULAR+INTERNET` request for its lifetime
+  (OxygenOS tears down the mobile PDN when any WiFi joins — app-strength
+  mobile-data-always-on).
+- **App-scoped network** (proven): only DroneLink's process can use the joined
+  network.
+- **DroneEngine** (`app/src/main/kotlin/com/dronelink/app/drone/DroneEngine.kt`)
+  — faithful Kotlin port of `drone-ctl/drone_daemon.py` (the oracle): 25Hz
+  control loop, 1Hz heartbeat, TC(9B)/GL(21B) framing, dead-man neutral,
+  trajectory scripting. Sends via `network.bindSocket` to the ORIGINAL drone
+  endpoint `192.168.1.1:7099`.
+- **McpServer** (`app/src/main/kotlin/com/dronelink/app/mcp/McpServer.kt`) —
+  minimal MCP server (JSON-RPC 2.0, streamable-HTTP subset) on
+  `0.0.0.0:8000`, reachable via the phone's tailnet IP. Methods: `initialize`,
+  `tools/list`, `tools/call` (14 tools mirroring drone_mcp.py). Starts/stops
+  with the service. See `PROTOCOL.md` for the conformance note.
+
+## MCP endpoint
+
+```
+POST http://<phone-tailnet-ip>:8000/mcp
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":1,"method":"initialize"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status"}}
+```
+
+Dev smoke without the drone (USB): `adb forward tcp:8000 tcp:8000`, then hit
+`http://127.0.0.1:8000/mcp`. Tools that need the drone (`takeoff`, `fly`, …)
+return a JSON-RPC error (`-32000`, "drone network not joined") until the drone
+AP is joined. `status` always works.
 
 ## Build
 
-Requires JDK 17 + Android SDK (platform 34, build-tools 34.0.0).
+Requires JDK 17 (system Java 27 breaks Gradle 8.9) + Android SDK (platform 34,
+build-tools 34.0.0).
 
 ```
-export JAVA_HOME=$(ls -d ~/opt/jdk-17* | head -1)
+export JAVA_HOME=/home/ekl/.hermes/profiles/neo/home/opt/jdk-17.0.21+9
 export PATH="$JAVA_HOME/bin:$PATH"
 ./gradlew assembleDebug
 ```
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`
+
+Unit tests (JVM, no device): `./gradlew testDebugUnitTest` — engine byte-tests
+against the Python oracle + MCP JSON-RPC/HTTP tests.
 
 ## Install
 
@@ -40,20 +70,16 @@ Open app → SSID field (prefilled with `WIFI_8K_20505f`) → **Join drone WiFi*
 Grant location / nearby-wifi permissions when asked. Tap the system consent
 panel. Status is in the persistent notification and the app screen (Refresh).
 
-## Home-WiFi mechanism test (GATE — before any drone battery)
+## Retired (v0.2)
 
-Script: `scripts/mechanism-test.sh` (run via adb shell on the phone while
-joined to a home AP, cellular on). Must observe:
+- **Termux** + `drone_daemon.py` on the phone (engine moved in-app).
+- **UDP relay** `127.0.0.1:17099 → 192.168.1.1:7099` (`UdpRelay.kt` deleted;
+  the engine owns the bound socket directly — the relay retarget in the repo
+  copy of the daemon is superseded).
+- **Laptop Python**: `drone_mcp.py` / `drone_client_mcp.py` (agent's MCP
+  client now targets the phone's tailnet IP port 8000).
 
-1. Active default network stays cellular (`rmnet_data*`), NOT wifi.
-2. Internet from the phone shell (ping 8.8.8.8) — riding cellular.
-3. Informational: subnet probe (`192.168.1.150`) — expected UNREACHABLE from a
-   plain shell socket (app-scoped network). Relay path is the deliverable:
-   from the phone, `echo -n "hi" | nc -u 127.0.0.1 17099` and watch it arrive
-   at the drone port (or use the daemon's `connect` cmd via its TCP :8000).
+## Evidence / gate
 
-The drone window opens only after (1)+(2) pass.
-
-## Evidence
-
-Save gate output under `evidence/` (e.g. `evidence/home-test-YYYYMMDD.txt`).
+`evidence/` in this repo holds gate outputs. The drone window is only open when
+Evan says the battery is charged — no drone-network testing before that.
