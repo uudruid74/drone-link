@@ -9,12 +9,18 @@ import java.io.IOException
  *
  * OBSERVABLE PROTOCOL BEHAVIOR MUST NOT DRIFT. The Python files are the
  * contract: identical UDP framing (25Hz control loop, 1Hz heartbeat, C=128,
- * flags 0x01/0x02/0x04/0x08/0x10/0x80), identical packet bytes, identical
+ * flags 0x01/0x02/0x04/0x08/0x10/0x20/0x80), identical packet bytes, identical
  * return shapes. Port, don't redesign.
  *
  * Targets the ORIGINAL drone endpoint 192.168.1.1:7099 (the
  * 127.0.0.1:17099 relay retarget in the repo copy of the daemon is
  * superseded — revert-note: v0.2 owns the bound socket in-app).
+ *
+ * v0.3.0 lifecycle (Evan/Gopher spec): the heartbeat runs LOCALLY and starts
+ * with the service — it is NOT gated behind an MCP `connect`. [bindAndStartAutonomous]
+ * is called by the service as soon as the drone network joins; MCP `connect`
+ * only additionally starts the 25Hz control + rx loops. MCP `disconnect`
+ * stops control/rx but leaves the autonomous heartbeat running.
  */
 
 object DroneProtocol {
@@ -31,6 +37,7 @@ object DroneProtocol {
     const val FLAG_STOP = 0x04
     const val FLAG_FLIP = 0x08
     const val FLAG_HEADLESS = 0x10
+    const val FLAG_RETURN = 0x20          // +32 isFastReturn (Return-to-Home), byte 6 flags
     const val FLAG_CALIBRATE = 0x80
 
     // Telemetry auto-detect: first byte -> GL (21-byte) vs TC (9-byte)
@@ -68,10 +75,15 @@ interface DroneTransport {
  *
  * @param forceVariant force 10=TC(9B) or a GL id; null = auto-detect.
  * @param now injectable clock in seconds (defaults to wall clock), for tests.
+ * @param extraStatus optional transport-level facts appended to [status]
+ *        (local socket address, bind mode, last RX source — packet evidence).
+ * @param debugLog optional diagnostic sink (wired to the app's scrolling log).
  */
 class DroneEngine(
     internal val transport: DroneTransport,
     private val forceVariant: Int? = null,
+    private val extraStatus: () -> Map<String, Any?> = { emptyMap() },
+    private val debugLog: (tag: String, msg: String) -> Unit = { _, _ -> },
     private val now: () -> Double = { System.currentTimeMillis() / 1000.0 },
 ) {
     val auto: Boolean = forceVariant == null
@@ -101,6 +113,11 @@ class DroneEngine(
     @Volatile
     var lockUntil = 0.0
 
+    /** Kill-switch state (emergency_land). Once set, the engine refuses all commands. */
+    @Volatile
+    var killed = false
+        private set
+
     @Volatile
     var waypoints = mutableListOf<Waypoint>()
 
@@ -120,34 +137,87 @@ class DroneEngine(
     var lastTelemetry: String? = null
 
     @Volatile
-    private var running = false
+    private var running = false          // control + rx loops
+
+    @Volatile
+    private var hbRunning = false        // heartbeat loop (autonomous)
+
+    @Volatile
+    private var hbAutonomous = false     // service-owned heartbeat survives MCP disconnect
 
     private val threads = mutableListOf<Thread>()
 
     // -- lifecycle ----------------------------------------------------------
 
-    /** Bind the UDP socket and start heartbeat + control + rx threads. */
+    /**
+     * Bind the UDP socket and start heartbeat + control + rx threads.
+     * Heartbeat also runs standalone (see [bindAndStartAutonomous]).
+     */
     @Synchronized
     fun connect() {
         if (connected) return
         transport.bind()                       // throws IOException if no joined network
         running = true
+        hbRunning = true
         connected = true
-        threads += thread("engine-hb") { hbLoop() }
-        threads += thread("engine-ctl") { ctlLoop() }
-        threads += thread("engine-rx") { rxLoop() }
+        ensureThreads()
     }
 
-    /** Close the socket and stop all daemon threads. */
+    /**
+     * v0.3.0: autonomous heartbeat. Called by the service the moment the drone
+     * network joins, BEFORE any MCP connect. Sends `01 01` at 1Hz locally.
+     * Survives MCP disconnects; only [shutdown] stops it.
+     */
+    @Synchronized
+    fun bindAndStartAutonomous() {
+        if (connected) {
+            hbAutonomous = true
+            hbRunning = true
+            return
+        }
+        transport.bind()                       // throws IOException if no joined network
+        hbAutonomous = true
+        hbRunning = true
+        connected = true
+        ensureThreads()
+    }
+
+    /** Stop MCP-scoped control/rx loops. Autonomous heartbeat keeps running. */
     @Synchronized
     fun disconnect() {
         running = false
+        if (!hbAutonomous) {
+            hbRunning = false
+        }
+        if (!hbRunning) {
+            connected = false
+        }
+    }
+
+    /** Full teardown (service destroy): stop everything, close the socket. */
+    @Synchronized
+    fun shutdown() {
+        running = false
+        hbRunning = false
+        hbAutonomous = false
         try {
             transport.close()
         } catch (e: IOException) {
             // Python swallows OSError here — mirror it.
         }
         connected = false
+    }
+
+    private fun ensureThreads() {
+        if (threads.none { it.name == "engine-hb" && it.isAlive }) {
+            threads += thread("engine-hb") { hbLoop() }
+        }
+        if (threads.none { it.name == "engine-ctl" && it.isAlive }) {
+            threads += thread("engine-ctl") { ctlLoop() }
+        }
+        if (threads.none { it.name == "engine-rx" && it.isAlive }) {
+            threads += thread("engine-rx") { rxLoop() }
+        }
     }
 
     private fun thread(name: String, block: () -> Unit): Thread =
@@ -170,6 +240,24 @@ class DroneEngine(
 
     fun on(name: String): Boolean = (pulses[name] ?: 0.0) > now()
 
+    // -- kill switch -----------------------------------------------------------
+
+    /** Engage the emergency kill switch. All further commands refuse. */
+    fun engageKillSwitch() {
+        killed = true
+        lockUntil = Double.POSITIVE_INFINITY
+        clearTrajectory()
+        pulses.clear()
+        debugLog("engine", "KILL SWITCH engaged — MCP server stopping, neutral held until restart")
+    }
+
+    /** Every command path must pass through this. */
+    private fun guardKill() {
+        if (killed) {
+            throw IllegalStateException("emergency_land kill switch engaged — restart the app to re-arm")
+        }
+    }
+
     // -- packet building ------------------------------------------------------
 
     /**
@@ -177,6 +265,7 @@ class DroneEngine(
      * GL (anything else) = 21 bytes. Byte-for-byte identical to the oracle.
      */
     fun packet(): ByteArray {
+        guardKill()
         var r = axes[0]
         var p = axes[1]
         val t = axes[2]
@@ -189,9 +278,11 @@ class DroneEngine(
         val drop = on("land")
         val estop = on("estop")
         val gyro = on("gyro")
+        val home = on("returnhome")
 
         if (variant != 10) {  // GL, 21 bytes
-            val f1 = (if (fly || drop) 1 else 0) or (if (estop) 2 else 0) or (if (gyro) 4 else 0)
+            val f1 = (if (fly || drop) 1 else 0) or (if (estop) 2 else 0) or (if (gyro) 4 else 0) or
+                (if (home) DroneProtocol.FLAG_RETURN else 0)
             val f2 = (if (headless) 1 else 0) or 2   // bit1 = fixed-height (alt hold)
             val cs = (f1 xor (((p xor r) xor t) xor y)) xor f2
             val inner = ByteArray(20)
@@ -213,6 +304,7 @@ class DroneEngine(
             (if (drop) 2 else 0) +
             (if (estop) 4 else 0) +
             (if (headless) 16 else 0) +
+            (if (home) DroneProtocol.FLAG_RETURN else 0) +
             (if (gyro) 128 else 0)
         val cs = (((r xor p) xor t) xor y) xor fl
         return byteArrayOf(3, 0x66, r.toByte(), p.toByte(), t.toByte(), y.toByte(),
@@ -222,7 +314,7 @@ class DroneEngine(
     // -- background threads ------------------------------------------------------
 
     private fun hbLoop() {
-        while (running) {
+        while (hbRunning) {
             raw(byteArrayOf(0x01, 0x01))
             Thread.sleep((DroneProtocol.HB_PERIOD * 1000).toLong())
         }
@@ -259,6 +351,7 @@ class DroneEngine(
     internal fun handleReceive(data: ByteArray) {
         rx++
         lastTelemetry = data.joinToString(" ") { "%02x".format(it) }
+        debugLog("rx", "len=${data.size} bytes=$lastTelemetry")
         if (auto && rx == 1) {
             val b0 = data[0].toInt() and 0xFF
             variant = if (b0 !in DroneProtocol.GL_IDS) 10 else b0
@@ -270,6 +363,7 @@ class DroneEngine(
     }
 
     internal fun deadman(): Boolean {
+        if (killed) return true
         if (waypoints.isNotEmpty()) return false
         if (now() < lockUntil) return true
         return (now() - axesTs) > DroneProtocol.STALE
@@ -336,6 +430,7 @@ class DroneEngine(
 
     /** Set raw stick axes, all in -1..1 (Python int() truncation mirrored). */
     fun setSticks(roll: Double, pitch: Double, throttle: Double, yaw: Double) {
+        guardKill()
         axes = intArrayOf(
             (DroneProtocol.C + roll.coerceIn(-1.0, 1.0) * DroneProtocol.GEARS[gear - 1]).toInt(),
             (DroneProtocol.C + pitch.coerceIn(-1.0, 1.0) * DroneProtocol.GEARS[gear - 1]).toInt(),
@@ -363,20 +458,27 @@ class DroneEngine(
         "last_telemetry" to lastTelemetry,
         "trajectory_active" to waypoints.isNotEmpty(),
         "trajectory_index" to wpIndex,
+        "killed" to killed,
+        "heartbeat_active" to hbRunning,
         "rtsp" to DroneProtocol.RTSP_URL,
-    )
+    ) + extraStatus()
 
     // -- command handlers (mirror drone_daemon.py handle()) ------------------------------
 
     /** Mirrors `_req`: connect on demand (with the oracle's 0.2s settle sleep). */
     fun requireConnected() {
+        guardKill()
         if (!connected) {
             connect()
             Thread.sleep(200)
         }
     }
 
-    fun cmdConnect(): Map<String, Any?> = linkedMapOf("ok" to true, "status" to status())
+    fun cmdConnect(): Map<String, Any?> {
+        guardKill()
+        requireConnected()
+        return linkedMapOf("ok" to true, "status" to status())
+    }
     fun cmdDisconnect(): Map<String, Any?> = linkedMapOf("ok" to true, "status" to status())
 
     fun cmdTakeoff(): Map<String, Any?> {
@@ -393,10 +495,15 @@ class DroneEngine(
 
     fun cmdEmergencyLand(): Map<String, Any?> {
         requireConnected()
-        lockUntil = now() + 4.0
         pulse("land", 4.0)
-        clearTrajectory()
-        return linkedMapOf("ok" to true, "cmd" to "emergency_land")
+        engageKillSwitch()
+        return linkedMapOf("ok" to true, "cmd" to "emergency_land", "status" to status())
+    }
+
+    fun cmdFlyHome(): Map<String, Any?> {
+        requireConnected()
+        pulse("returnhome", 5.0)
+        return linkedMapOf("ok" to true, "cmd" to "fly_home")
     }
 
     fun cmdFly(roll: Double, pitch: Double, throttle: Double, yaw: Double): Map<String, Any?> {
