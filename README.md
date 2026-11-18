@@ -28,6 +28,15 @@ the app** (v0.2) — no Termux, no relay, no laptop Python.
   `tools/list`, `tools/call` (14 tools mirroring drone_mcp.py). Starts/stops
   with the service. See `PROTOCOL.md` for the conformance note.
 
+## The icon
+
+`ic_launcher_foreground.xml` is a hand-drawn stroke vector (adaptive icon, round-cap
+lines) by **Neo** — the coding agent that built v0.1 (commit `2c9ffd1`, 2026-11-17).
+The geometry: two nested semicircular arcs on the vertical midline (radii 22 and 14 —
+the rotor domes) over a small circle below-left (the gimbal camera dot). Read it as a
+minimal drone in profile: rotors overhead, camera ball beneath. Yes, the designer is an
+AI agent — the fleet's build worker drew it in the same run that wrote the WiFi join.
+
 ## MCP endpoint
 
 ```
