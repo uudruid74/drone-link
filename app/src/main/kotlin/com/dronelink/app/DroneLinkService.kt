@@ -15,8 +15,13 @@ import android.os.IBinder
 import com.dronelink.app.debug.DebugLog
 import com.dronelink.app.drone.DroneEngine
 import com.dronelink.app.drone.DroneNetworkTransport
+import com.dronelink.app.drone.ScopedSockets
 import com.dronelink.app.drone.TelemetryProbe
 import com.dronelink.app.mcp.McpServer
+import com.dronelink.app.video.MjpegHttpServer
+import com.dronelink.app.video.RtspClient
+import com.dronelink.app.video.TcpSocketProvider
+import com.dronelink.app.video.UdpSocketProvider
 
 /**
  * Phase 1: joins the drone WiFi as a LOCAL-ONLY secondary network via
@@ -50,6 +55,9 @@ class DroneLinkService : Service() {
     private var mcp: McpServer? = null
     // v0.3.0: rx:0 telemetry probe (passive fixed-port listeners).
     private var probe: TelemetryProbe? = null
+    // v0.3.0: RTSP→MJPEG proxy (laptop FPV over tailnet + snapshots).
+    private var proxyClient: RtspClient? = null
+    private var videoHttp: MjpegHttpServer? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -82,7 +90,7 @@ class DroneLinkService : Service() {
         if (mcp != null) return
         val e = DroneEngine(transport)
         engine = e
-        val s = McpServer(e)
+        val s = McpServer(e, onEmergencyLand = ::onEmergencyLand)
         try {
             s.start()
             mcp = s
@@ -137,6 +145,29 @@ class DroneLinkService : Service() {
                 } catch (e: Exception) {
                     DebugLog.log("service", "telemetry probe failed: ${e.message}")
                 }
+                // RTSP → MJPEG proxy: FPV for the laptop over tailnet + snapshots.
+                try {
+                    val cm = connectivityManager
+                    val proxy = RtspClient(
+                        tcp = TcpSocketProvider { addr, timeoutMs ->
+                            ScopedSockets.newTcpSocket(cm, network, addr, timeoutMs).socket
+                        },
+                        udp = UdpSocketProvider {
+                            ScopedSockets.newDatagramSocket(cm, network).socket
+                        },
+                    )
+                    proxy.start()
+                    proxyClient = proxy
+                    val http = MjpegHttpServer(proxy)
+                    http.start()
+                    videoHttp = http
+                    mcp?.videoFeed = proxy
+                    mcp?.videoPort = http.boundPort
+                    mcp?.videoHost = guessExternalHost() ?: "127.0.0.1"
+                    DebugLog.log("video", "proxy up: ${mcp?.videoHost}:${http.boundPort} (rtsp err=${proxy.error})")
+                } catch (e: Exception) {
+                    DebugLog.log("service", "video proxy failed: ${e.message}")
+                }
                 updateNotification(getString(R.string.notif_connected, ssid, network.toString()))
             }
 
@@ -144,6 +175,10 @@ class DroneLinkService : Service() {
                 transport.network = null
                 probe?.stop()
                 probe = null
+                videoHttp?.stop()
+                videoHttp = null
+                proxyClient?.stop()
+                proxyClient = null
                 JoinStatus.state = JoinState.LOST
                 JoinStatus.detail = "lost ${network}"
                 JoinStatus.joinedNetwork = null
@@ -205,11 +240,50 @@ class DroneLinkService : Service() {
         updateNotification(getString(R.string.notif_killed))
     }
 
+    /**
+     * Best guess of an address on THIS phone that the laptop can reach over
+     * tailnet (for the proxied video URL). Prefers the Tailscale ULA prefix
+     * (fd7a::/48), then any non-link-local, non-drone-LAN address.
+     */
+    private fun guessExternalHost(): String? {
+        return try {
+            val ifaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
+            val list = ifaces.toList()
+            for (i in list) {
+                val name = i.name.lowercase()
+                if (name.contains("wlan") || name.contains("rmnet")) continue
+                for (a in i.inetAddresses) {
+                    val h = a.hostAddress ?: continue
+                    if (a.isLoopbackAddress || a.isLinkLocalAddress) continue
+                    if (h.startsWith("fd7a:")) return h
+                }
+            }
+            for (i in list) {
+                val name = i.name.lowercase()
+                if (name.contains("wlan") || name.contains("rmnet")) continue
+                for (a in i.inetAddresses) {
+                    val h = a.hostAddress ?: continue
+                    if (a.isLoopbackAddress || a.isLinkLocalAddress) continue
+                    if (h.startsWith("192.168.1.")) continue
+                    if (h.contains(":")) continue
+                    return h
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     override fun onDestroy() {
         mcp?.stop()
         engine?.shutdown()
         probe?.stop()
         probe = null
+        videoHttp?.stop()
+        videoHttp = null
+        proxyClient?.stop()
+        proxyClient = null
         mcp = null
         engine = null
         val cb = callback

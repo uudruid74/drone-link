@@ -1,6 +1,7 @@
 package com.dronelink.app.mcp
 
 import com.dronelink.app.drone.DroneEngine
+import com.dronelink.app.video.VideoFeed
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
@@ -10,6 +11,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 /**
  * Minimal MCP server (JSON-RPC 2.0 over the streamable-HTTP subset) serving
@@ -17,6 +19,14 @@ import java.nio.charset.StandardCharsets
  * the 12 @mcp.tool() tools from lines 286-400 VERBATIM (names, schemas,
  * behavior, return shapes) plus `status` and `video_url` (same file, needed
  * for smoke verification — the full MCP surface of the oracle).
+ *
+ * v0.3.0 additions (Evan/Gopher spec):
+ *  - `fly_home` tool (Return-to-Home, protocol +32 byte 6)
+ *  - `snapshot` tool (latest MJPEG frame, base64 — stdlib only)
+ *  - emergency_land = kill switch: the engine refuses all tools and the
+ *    server stops itself via [onEmergencyLand] until app restart
+ *  - video_url now returns the proxied MJPEG stream (RTSP proxy), not the
+ *    useless drone-side rtsp:// URL
  *
  * Transport: POST JSON-RPC to /mcp (streamable-HTTP subset — SSE is not
  * required by the plan). Binds 0.0.0.0:8000 so the phone's tailnet IP can
@@ -27,13 +37,26 @@ import java.nio.charset.StandardCharsets
 class McpServer(
     private val engine: DroneEngine,
     private val port: Int = 8000,
+    private val onEmergencyLand: (() -> Unit)? = null,
 ) {
+    /** Live video feed (RTSP proxy) for the snapshot tool. Set by the service. */
+    @Volatile
+    var videoFeed: VideoFeed? = null
+
+    /** Host the laptop uses to reach the app (tailnet IP); set by the service. */
+    @Volatile
+    var videoHost: String = "127.0.0.1"
+
+    /** Proxy HTTP port for /video and /snapshot. */
+    @Volatile
+    var videoPort: Int = 8080
+
     data class ToolSpec(val name: String, val description: String, val schema: JSONObject)
 
     companion object {
         const val PROTOCOL_VERSION = "2025-03-26"
         const val SERVER_NAME = "drone-ctl"
-        const val SERVER_VERSION = "0.2.0"
+        const val SERVER_VERSION = "0.3.0"
 
         private fun obj(vararg pairs: Pair<String, Any?>) = JSONObject().apply {
             for ((k, v) in pairs) putOpt(k, v)
@@ -52,7 +75,7 @@ class McpServer(
         ),
         ToolSpec(
             "disconnect",
-            "Disconnect and close the control socket.",
+            "Stop the MCP-scoped control/rx loops. The autonomous heartbeat keeps running.",
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
@@ -67,7 +90,13 @@ class McpServer(
         ),
         ToolSpec(
             "emergency_land",
-            "Emergency stop + hold sticks neutral for 4s (ignores other input).",
+            "EMERGENCY KILL SWITCH: lands, holds neutral, stops the MCP server. " +
+                "Restart the app to re-arm.",
+            obj("type" to "object", "properties" to JSONObject()),
+        ),
+        ToolSpec(
+            "fly_home",
+            "Return-to-Home (protocol flag +32, byte 6) for 5s.",
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
@@ -144,7 +173,12 @@ class McpServer(
         ),
         ToolSpec(
             "video_url",
-            "Return the RTSP video URL for live FPV (MJPEG over UDP).",
+            "Return the proxied live video URL (MJPEG over HTTP, tailnet-reachable).",
+            obj("type" to "object", "properties" to JSONObject()),
+        ),
+        ToolSpec(
+            "snapshot",
+            "Return the latest complete frame as base64 JPEG (or an error if none yet).",
             obj("type" to "object", "properties" to JSONObject()),
         ),
     )
@@ -217,7 +251,7 @@ class McpServer(
                 method == "POST" && path == "/mcp" ->
                     Triple(200, "application/json", handlePost(String(body, StandardCharsets.UTF_8)))
                 method == "GET" ->
-                    Triple(200, "text/plain", "DroneLink MCP v0.2 — POST JSON-RPC to /mcp\n")
+                    Triple(200, "text/plain", "DroneLink MCP v0.3 — POST JSON-RPC to /mcp\n")
                 else -> Triple(404, "text/plain", "not found\n")
             }
             writeResponse(output, status, contentType, respBody)
@@ -312,13 +346,25 @@ class McpServer(
         if (name !in toolsByName) {
             return errorResponse(id, -32602, "Unknown tool: $name").toString()
         }
+        if (engine.killed) {
+            return errorResponse(
+                id, -32000,
+                "emergency_land kill switch engaged — restart the app to re-arm",
+            ).toString()
+        }
         return try {
             val result = when (name) {
                 "connect" -> engine.cmdConnect()
                 "disconnect" -> engine.cmdDisconnect()
                 "takeoff" -> engine.cmdTakeoff()
                 "land" -> engine.cmdLand()
-                "emergency_land" -> engine.cmdEmergencyLand()
+                "emergency_land" -> {
+                    val r = engine.cmdEmergencyLand()
+                    // Kill switch: stop the MCP server (and everything else) now.
+                    onEmergencyLand?.invoke()
+                    r
+                }
+                "fly_home" -> engine.cmdFlyHome()
                 "fly" -> engine.cmdFly(
                     args.optDouble("roll", 0.0),
                     args.optDouble("pitch", 0.0),
@@ -332,7 +378,11 @@ class McpServer(
                 "calibrate" -> engine.cmdCalibrate()
                 "set_gear" -> engine.cmdSetGear(args.optInt("gear", 1))
                 "status" -> engine.status()
-                "video_url" -> engine.cmdVideoUrl()
+                "video_url" -> {
+                    val base = "http://$videoHost:$videoPort"
+                    linkedMapOf("ok" to true, "url" to "$base/video", "snapshot" to "$base/snapshot")
+                }
+                "snapshot" -> snapshotTool()
                 else -> return errorResponse(id, -32602, "Unknown tool: $name").toString()
             }
             success(id, JSONObject()
@@ -345,6 +395,16 @@ class McpServer(
         } catch (e: Exception) {
             errorResponse(id, -32000, "Tool failed: ${e.message}").toString()
         }
+    }
+
+    private fun snapshotTool(): Map<String, Any?> {
+        val frame = videoFeed?.latestFrame
+            ?: return linkedMapOf("ok" to false, "error" to "no video frame yet")
+        return linkedMapOf(
+            "ok" to true,
+            "size" to frame.size,
+            "jpeg_base64" to Base64.getEncoder().encodeToString(frame),
+        )
     }
 
     private fun parseWaypoints(arr: JSONArray?): List<Map<String, Any?>> {

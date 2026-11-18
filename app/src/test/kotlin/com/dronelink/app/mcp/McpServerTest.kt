@@ -63,7 +63,7 @@ class McpServerTest {
         assertEquals("2025-03-26", result.getString("protocolVersion"))
         assertTrue(result.getJSONObject("capabilities").has("tools"))
         assertEquals("drone-ctl", result.getJSONObject("serverInfo").getString("name"))
-        assertEquals("0.2.0", result.getJSONObject("serverInfo").getString("version"))
+        assertEquals("0.3.0", result.getJSONObject("serverInfo").getString("version"))
     }
 
     // ---- tools/list ----
@@ -74,15 +74,16 @@ class McpServerTest {
         val names = mutableListOf<String>()
         for (i in 0 until tools.length()) names += tools.getJSONObject(i).getString("name")
         // the 12 verbatim tools from drone_mcp.py:286-400 + status/video_url
+        // + v0.3.0 fly_home/snapshot
         assertEquals(
             listOf(
                 "connect", "disconnect", "takeoff", "land", "emergency_land",
-                "fly", "trajectory", "stop_trajectory", "camera", "headless",
-                "calibrate", "set_gear", "status", "video_url",
+                "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "headless",
+                "calibrate", "set_gear", "status", "video_url", "snapshot",
             ),
             names,
         )
-        assertEquals(14, tools.length())
+        assertEquals(16, tools.length())
     }
 
     @Test fun flySchemaVerbatim() {
@@ -161,7 +162,9 @@ class McpServerTest {
     @Test fun callVideoUrl() {
         val res = rpc("tools/call", JSONObject().put("name", "video_url"))
         val text = res.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
-        assertEquals("rtsp://192.168.1.1:7070/webcam", JSONObject(text).getString("url"))
+        // v0.3.0: video_url serves the proxied MJPEG stream, not the raw rtsp://
+        assertEquals("http://127.0.0.1:8080/video", JSONObject(text).getString("url"))
+        assertEquals("http://127.0.0.1:8080/snapshot", JSONObject(text).getString("snapshot"))
     }
 
     @Test fun callFlyReturnsAxes() {
