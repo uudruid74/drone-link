@@ -11,7 +11,7 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 6
+        versionCode = 7
         versionName = "0.3.0"  // version-bump law (Evan 2026-11-18): v0.3.0
     }
 
