@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.1"  // version-bump law (Evan 2026-11-18): bindSocket bypass build
     }
 
     buildTypes {

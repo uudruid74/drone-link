@@ -39,11 +39,41 @@ class DroneNetworkTransport(
         try {
             n.bindSocket(s)
         } catch (e: IOException) {
+            // EPERM under a secure VPN (Tailscale, 2026-11-18): netd refuses the
+            // EXPLICIT cross-network bind call. Bypass (Evan: "bypass bindSocket
+            // or whatever we need"): sockets inherit the process default network
+            // at creation — so create this socket inside a millisecond-scale
+            // bindProcessToNetwork(n) window instead of calling bindSocket at all.
+            // The socket keeps the drone network's netId for its whole life;
+            // sends/receives need no per-call scoping and the MCP server's
+            // tailnet sockets are only exposed during the creation window.
             s.close()
-            throw IOException(DroneBindCause.explain(context, e), e)
+            val scoped = createInherited(n)
+            scoped.soTimeout = 500
+            socket = scoped
+            return
         }
         s.soTimeout = 500
         socket = s
+    }
+
+    private fun createInherited(n: Network): DatagramSocket {
+        val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager
+            ?: throw IOException(
+                "bindSocket failed and no ConnectivityManager for the scoped-create bypass"
+            )
+        val prev = try {
+            cm.boundNetworkForProcess
+        } catch (_: Throwable) {
+            null
+        }
+        return try {
+            cm.bindProcessToNetwork(n)
+            DatagramSocket()
+        } finally {
+            cm.bindProcessToNetwork(prev) // restore immediately — null unbinds
+        }
     }
 
     override fun send(data: ByteArray) {
