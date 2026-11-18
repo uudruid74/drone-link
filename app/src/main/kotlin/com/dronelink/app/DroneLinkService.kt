@@ -12,11 +12,18 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.IBinder
+import com.dronelink.app.drone.DroneEngine
+import com.dronelink.app.drone.DroneNetworkTransport
+import com.dronelink.app.mcp.McpServer
 
 /**
  * Phase 1: joins the drone WiFi as a LOCAL-ONLY secondary network via
  * WifiNetworkSpecifier. Cellular stays the default network; the drone subnet
  * becomes reachable on the joined network (app-scoped — see README).
+ *
+ * v0.2: the drone control engine (DroneEngine) + MCP server (McpServer, port
+ * 8000) live in this service, bound onto the joined network — retires Termux,
+ * the UDP relay, and laptop Python.
  *
  * The service holds the NetworkRequest while running. The system shows one
  * consent panel per join request; the request stays pending until the user
@@ -34,7 +41,11 @@ class DroneLinkService : Service() {
     private var request: NetworkRequest? = null
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var ssid: String = ""
-    private var relay: UdpRelay? = null
+
+    // v0.2: in-app drone engine + MCP server (retires Termux + relay + laptop Python).
+    private val transport = DroneNetworkTransport()
+    private var engine: DroneEngine? = null
+    private var mcp: McpServer? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -53,8 +64,28 @@ class DroneLinkService : Service() {
         startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_searching)))
         JoinStatus.state = JoinState.REQUESTING
         JoinStatus.detail = "requesting $ssid"
+        startEngineMcp()
         requestJoin(ssid)
         return START_STICKY
+    }
+
+    /**
+     * v0.2: start the drone engine + MCP server with the service (lifecycle).
+     * The engine connects lazily on the first tool that needs the drone; the
+     * MCP server listens on 0.0.0.0:8000 (tailnet-reachable).
+     */
+    private fun startEngineMcp() {
+        if (mcp != null) return
+        val e = DroneEngine(transport)
+        engine = e
+        val s = McpServer(e)
+        try {
+            s.start()
+            mcp = s
+        } catch (ex: Exception) {
+            // Port in use / bind failure — surface it, don't crash the service.
+            JoinStatus.detail = "mcp failed to start: ${ex.message}"
+        }
     }
 
     private fun requestJoin(ssid: String) {
@@ -79,14 +110,14 @@ class DroneLinkService : Service() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 JoinStatus.state = JoinState.CONNECTED
-                JoinStatus.detail = "connected ${network}"
+                JoinStatus.detail = "connected ${network}, mcp :8000"
                 JoinStatus.joinedNetwork = network
-                startRelay(network)
+                transport.network = network
                 updateNotification(getString(R.string.notif_connected, ssid, network.toString()))
             }
 
             override fun onLost(network: Network) {
-                stopRelay()
+                transport.network = null
                 JoinStatus.state = JoinState.LOST
                 JoinStatus.detail = "lost ${network}"
                 JoinStatus.joinedNetwork = null
@@ -102,23 +133,6 @@ class DroneLinkService : Service() {
         connectivityManager.requestNetwork(req, cb)
         request = req
         callback = cb
-    }
-
-    /**
-     * Phase 2 UDP relay: 127.0.0.1:17099 -> 192.168.1.1:7099 on the joined
-     * network. The specifier network is app-scoped, so the relay lives here —
-     * the Termux daemon targets localhost.
-     */
-    private fun startRelay(network: Network) {
-        if (relay != null) return
-        val r = UdpRelay(network)
-        relay = r
-        JoinStatus.detail = "connected ${network}, relay :${r.listeningPort}"
-    }
-
-    private fun stopRelay() {
-        relay?.stop()
-        relay = null
     }
 
     private fun createNotificationChannel() {
@@ -152,7 +166,10 @@ class DroneLinkService : Service() {
     }
 
     override fun onDestroy() {
-        stopRelay()
+        mcp?.stop()
+        engine?.disconnect()
+        mcp = null
+        engine = null
         val cb = callback
         if (cb != null) {
             runCatching { connectivityManager.unregisterNetworkCallback(cb) }
