@@ -84,6 +84,23 @@ JSON-RPC errors: -32700 parse, -32601 method not found, -32602 unknown tool,
 - [x] On-device (CPH2583) smoke over `adb forward`: initialize, tools/list,
       status (json array axes), "drone network not joined" error path
 - [x] Tailnet smoke: initialize + status via phone tailnet IP 100.79.70.16:8000
+- [x] bindSocket EPERM root-caused (t_fcf1c62e): Tailscale VPN covers uid 10453
+      (dumpsys: VpnTransportInfo bypassable=false, Uids 10297-10500); netd
+      checkUserNetworkAccessLocked returns -EPERM for non-VPN binds. App now
+      detects VPN-on-active-network and reports the remedy in the -32000 error.
 - [ ] Live-drone control: PENDING — drone AP offline (Evan: battery charging).
       When the window opens, run one flight-ready pass (join AP, then
       status -> takeoff-with-props-removed check per Evan's gate).
+
+## Window checklist (drone battery charged, Evan's gate)
+
+1. Confirm Tailscale state on the phone: if the VPN is ON and covers DroneLink
+   (Tailscale › Bypass VPN for apps does NOT list DroneLink), the bind will
+   fail with EPERM regardless of the join. Either add DroneLink to *Bypass
+   VPN for apps* (note: this app then loses tailnet reachability for its MCP
+   server — MCP clients must instead use `adb forward` or LAN), or stop the
+   VPN for the flight. The status tool's `connected` stays false and the MCP
+   error names the remedy.
+2. Join the drone AP (consent panel), then `status` → `connected: true` and
+   `last_telemetry` populated within a heartbeat.
+3. Flight pass per Evan: status → takeoff-with-props-removed check.

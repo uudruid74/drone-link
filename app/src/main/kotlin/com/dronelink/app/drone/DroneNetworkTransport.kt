@@ -1,5 +1,6 @@
 package com.dronelink.app.drone
 
+import android.content.Context
 import android.net.Network
 import java.io.IOException
 import java.net.DatagramPacket
@@ -15,8 +16,15 @@ import java.net.InetSocketAddress
  * The [network] slot is set/cleared by DroneLinkService as the join comes
  * and goes. bind() fails with IOException until a joined network exists —
  * tools then surface a JSON-RPC error instead of silently sending nothing.
+ *
+ * Known failure mode (2026-11-18): if a secure VPN (Tailscale) applies to this
+ * app's UID, Android/netd rejects the bind with EPERM even though the join
+ * succeeded. [context] is used (when available) to detect that and produce an
+ * actionable error instead of a bare errno.
  */
-class DroneNetworkTransport : DroneTransport {
+class DroneNetworkTransport(
+    private val context: Context? = null,
+) : DroneTransport {
 
     @Volatile
     var network: Network? = null
@@ -28,7 +36,12 @@ class DroneNetworkTransport : DroneTransport {
         if (socket != null) return
         val n = network ?: throw IOException("drone network not joined")
         val s = DatagramSocket()
-        n.bindSocket(s)
+        try {
+            n.bindSocket(s)
+        } catch (e: IOException) {
+            s.close()
+            throw IOException(DroneBindCause.explain(context, e), e)
+        }
         s.soTimeout = 500
         socket = s
     }

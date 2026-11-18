@@ -43,7 +43,7 @@ class DroneLinkService : Service() {
     private var ssid: String = ""
 
     // v0.2: in-app drone engine + MCP server (retires Termux + relay + laptop Python).
-    private val transport = DroneNetworkTransport()
+    private val transport = DroneNetworkTransport(this)
     private var engine: DroneEngine? = null
     private var mcp: McpServer? = null
 

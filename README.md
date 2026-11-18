@@ -22,6 +22,10 @@ the app** (v0.2) — no Termux, no relay, no laptop Python.
   control loop, 1Hz heartbeat, TC(9B)/GL(21B) framing, dead-man neutral,
   trajectory scripting. Sends via `network.bindSocket` to the ORIGINAL drone
   endpoint `192.168.1.1:7099`.
+- **Tailscale VPN caveat** — if Tailscale's VPN applies to DroneLink (UID
+  covered, non-bypassable), Android/netd rejects `network.bindSocket` with
+  EPERM even though the join succeeded. The MCP error now says so and points
+  at Tailscale › *Bypass VPN for apps*. See PROTOCOL.md window checklist.
 - **McpServer** (`app/src/main/kotlin/com/dronelink/app/mcp/McpServer.kt`) —
   minimal MCP server (JSON-RPC 2.0, streamable-HTTP subset) on
   `0.0.0.0:8000`, reachable via the phone's tailnet IP. Methods: `initialize`,
