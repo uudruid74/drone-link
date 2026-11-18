@@ -38,6 +38,8 @@ class DroneLinkService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private val cellKeepAliveCb = object : ConnectivityManager.NetworkCallback() {}
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -56,6 +58,17 @@ class DroneLinkService : Service() {
     }
 
     private fun requestJoin(ssid: String) {
+        // Cellular keep-alive — 2026-11-18 live test: OxygenOS tears down the mobile
+        // data PDN when any WiFi joins ("it was concurrent, then it dropped the data
+        // connection and internet went dead"). A HELD TRANSPORT_CELLULAR+INTERNET
+        // request obliges the system to keep the data connection up — the app-strength
+        // form of "mobile data always active".
+        val cellReq = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.requestNetwork(cellReq, cellKeepAliveCb)
+
         val specifier = WifiNetworkSpecifier.Builder()
             .setSsid(ssid)
             .build()

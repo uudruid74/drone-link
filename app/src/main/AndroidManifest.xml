@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <!-- Queries the active network (status display). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- FGS type connectedDevice requires one of the "any of" perms (crash log 2026-11-18:
+         SecurityException at DroneLinkService.kt:51) — WiFi state changes are the fit here. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <!-- UDP relay (Phase 2) + general sockets. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
