@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is permitted ONLY to loopback: the UI calls the app's own MCP
+     server at http://127.0.0.1:8000/mcp (Evan 2026-11-18: "the localhost is
+     wrong too" — Android 14 blocks even loopback cleartext without this).
+     Everything else stays under the default HTTPS-only policy. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">::1</domain>
+    </domain-config>
+</network-security-config>
