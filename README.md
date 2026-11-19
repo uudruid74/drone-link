@@ -96,3 +96,37 @@ panel. Status is in the persistent notification and the app screen (Refresh).
 
 `evidence/` in this repo holds gate outputs. The drone window is only open when
 Evan says the battery is charged — no drone-network testing before that.
+
+## Flight verification (2026-11-19)
+
+Verified on live drone WiFi (`8K_20505f`) with build `9e77a58`:
+
+- **Takeoff + trajectory sustain** — PASSED. `takeoff` sends the arm flag
+  (`FLAG_TAKEOFF`) together with `TAKEOFF_THROTTLE=60`; the `trajectory` then
+  advances on its own (`trajectory_index` moves 0→2→cleared) and holds non-zero
+  throttle through the climb/descent. The drone lifted ~2-4 ft, held, and landed.
+- **Root cause of the earlier crash / no-lift** — `requireConnected()` gated
+  `connect()` on `!connected`, but `bindAndStartAutonomous()` already set
+  `connected=true` without setting `running=true`. So `running` stayed false and
+  the control loop never advanced trajectories or held throttle. Fixed in
+  `9e77a58` by calling `connect()` unconditionally.
+
+## Known issues (open)
+
+- **Corrupt snapshot frames** — the MJPEG/RTP reassembly produces malformed
+  JPEGs (valid `FFD8` SOI but no APP0 header, raw entropy bytes). This is an
+  RTP payload-fragmentation reassembly issue in the `MjpegAssembler`/`RtspClient`
+  path, NOT a covered camera. Still open; `rtp: pkts=… frames=…` counters in the
+  debug log show frames are streaming but corrupt.
+- **Drone drift** — no position/IMU data in the 5-byte TC status, so there's no
+  closed-loop position hold. Calibration + trim reduces but doesn't eliminate
+  sideways drift; it's inherent to the airframe.
+
+## Debug log access
+
+The MCP `debug_log` tool returns the app's ring buffer (service / transport /
+probe / rtsp / heartbeat lines). Watch for:
+- `[rtsp] rtp: pkts=… frames=…` — camera frame counters (frames>0 but black/corrupt
+  = source-side reassembly issue; frames=0 despite PLAY ok = camera not streaming).
+- `[transport] bound mode=bindSocket` — confirms the engine bound to the drone net.
+- `[video] proxy up: :8080` — confirms the RTSP→MJPEG proxy is serving.
