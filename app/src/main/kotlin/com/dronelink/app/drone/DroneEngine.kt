@@ -155,11 +155,15 @@ class DroneEngine(
      */
     @Synchronized
     fun connect() {
-        if (connected) return
-        transport.bind()                       // throws IOException if no joined network
+        // Evan 2026-11-18 "It's not working" — this early-returned when the
+        // autonomous bind had already set `connected`, so the 25Hz stream NEVER
+        // started and buttons were silently dead. Always (re)start the loops.
+        if (!connected) {
+            transport.bind()                   // throws IOException if no joined network
+            connected = true
+        }
         running = true
         hbRunning = true
-        connected = true
         ensureThreads()
     }
 
@@ -322,9 +326,13 @@ class DroneEngine(
 
     private fun ctlLoop() {
         var n = now()
-        while (running) {
-            advanceTrajectory()
-            if (deadman()) {
+        // Stream runs while BOUND (hbRunning), not just while a UI session is
+        // active: the Python daemon streams 25Hz neutral frames from startup and
+        // the drone is built for that (dead-man neutral). `running` gates USER
+        // control only — without it the stream stays neutral but alive.
+        while (hbRunning) {
+            if (running) advanceTrajectory()
+            if (!running || deadman()) {
                 axes = DroneProtocol.NEUTRAL_AXES.copyOf()
             }
             raw(packet())
@@ -336,7 +344,7 @@ class DroneEngine(
 
     private fun rxLoop() {
         val buf = ByteArray(1024)
-        while (running) {
+        while (hbRunning) {
             val len = try {
                 transport.receive(buf)
             } catch (e: IOException) {

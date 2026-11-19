@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.3.0"  // version-bump law (Evan 2026-11-18): v0.3.0
+        versionCode = 11
+        versionName = "0.3.4"  // version-bump law (Evan 2026-11-18): 25Hz stream runs while bound (daemon shape); connect() no early-return
     }
 
     buildTypes {

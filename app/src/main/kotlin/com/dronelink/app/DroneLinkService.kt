@@ -242,34 +242,25 @@ class DroneLinkService : Service() {
 
     /**
      * Best guess of an address on THIS phone that the laptop can reach over
-     * tailnet (for the proxied video URL). Prefers the Tailscale ULA prefix
-     * (fd7a::/48), then any non-link-local, non-drone-LAN address.
+     * tailnet (for the proxied video URL). Evan 2026-11-18: never advertise
+     * tailnet IPv6 (fd7a) — "IPv6 routing isn't stable here." Prefer tailnet
+     * IPv4 (100.x), then any other non-link-local, non-drone-LAN IPv4. No IPv6.
      */
     private fun guessExternalHost(): String? {
         return try {
             val ifaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
-            val list = ifaces.toList()
-            for (i in list) {
-                val name = i.name.lowercase()
-                if (name.contains("wlan") || name.contains("rmnet")) continue
-                for (a in i.inetAddresses) {
-                    val h = a.hostAddress ?: continue
-                    if (a.isLoopbackAddress || a.isLinkLocalAddress) continue
-                    if (h.startsWith("fd7a:")) return h
+            val v4 = ifaces.toList()
+                .filter { i ->
+                    val name = i.name.lowercase()
+                    !(name.contains("wlan") || name.contains("rmnet"))
                 }
-            }
-            for (i in list) {
-                val name = i.name.lowercase()
-                if (name.contains("wlan") || name.contains("rmnet")) continue
-                for (a in i.inetAddresses) {
-                    val h = a.hostAddress ?: continue
-                    if (a.isLoopbackAddress || a.isLinkLocalAddress) continue
-                    if (h.startsWith("192.168.1.")) continue
-                    if (h.contains(":")) continue
-                    return h
+                .flatMap { it.inetAddresses.toList() }
+                .filter {
+                    !it.isLoopbackAddress && !it.isLinkLocalAddress && !it.hostAddress!!.contains(":")
                 }
-            }
-            null
+                .map { it.hostAddress!! }
+                .filter { !it.startsWith("192.168.1.") }
+            v4.firstOrNull { it.startsWith("100.") } ?: v4.firstOrNull()
         } catch (_: Exception) {
             null
         }

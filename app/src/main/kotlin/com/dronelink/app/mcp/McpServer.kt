@@ -181,6 +181,11 @@ class McpServer(
             "Return the latest complete frame as base64 JPEG (or an error if none yet).",
             obj("type" to "object", "properties" to JSONObject()),
         ),
+        ToolSpec(
+            "debug_log",
+            "Return the app's DebugLog ring (transport/probe/rtsp lines) as stamped text.",
+            obj("type" to "object", "properties" to JSONObject()),
+        ),
     )
 
     private val toolsByName = tools.associateBy { it.name }
@@ -383,6 +388,10 @@ class McpServer(
                     linkedMapOf("ok" to true, "url" to "$base/video", "snapshot" to "$base/snapshot")
                 }
                 "snapshot" -> snapshotTool()
+                "debug_log" -> linkedMapOf(
+                    "ok" to true,
+                    "log" to com.dronelink.app.debug.DebugLog.exportText(),
+                )
                 else -> return errorResponse(id, -32602, "Unknown tool: $name").toString()
             }
             success(id, JSONObject()

@@ -50,7 +50,7 @@ class DroneNetworkTransport(
         if (socket != null) return
         val n = network ?: throw IOException("drone network not joined")
         val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-        val scoped = ScopedSockets.newDatagramSocket(cm, n)
+        val scoped = ScopedSockets.newDatagramSocket(cm, n, addr) // CONNECTED inside the window — rx:0 fix (route was stamped to cellular outside it)
         scoped.socket.soTimeout = 500
         socket = scoped.socket
         bindMode = scoped.mode

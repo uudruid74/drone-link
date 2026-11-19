@@ -42,33 +42,60 @@ object ScopedSockets {
     /** Result of a scoped socket creation: the socket + which strategy won. */
     class ScopedSocket<T>(val socket: T, val mode: String)
 
-    /** UDP socket bound onto [n] (bindSocket, with EPERM inherited fallback). */
-    fun newDatagramSocket(cm: ConnectivityManager?, n: Network): ScopedSocket<DatagramSocket> {
+    /** UDP socket bound onto [n] (bindSocket, with EPERM inherited fallback).
+     *  [peer] (when given) is CONNECTED INSIDE the bound window — Android
+     *  stamps the routing at connect/use time, and the old create-in-window/
+     *  use-outside pattern leaked sockets onto the cellular default (rx:0
+     *  root-cause candidate: heartbeats sent to nowhere). */
+    fun newDatagramSocket(
+        cm: ConnectivityManager?,
+        n: Network,
+        peer: InetSocketAddress? = null,
+    ): ScopedSocket<DatagramSocket> {
         val s = DatagramSocket()
+        try {
+            n.bindSocket(s)
+            peer?.let { s.connect(it) }
+            return ScopedSocket(s, "bindSocket")
+        } catch (e: IOException) {
+            s.close()
+            val made = withinBoundNetwork(cm, n) {
+                DatagramSocket().also { d -> peer?.let { d.connect(it) } }
+            }
+            return ScopedSocket(made, "inherited-eperm-bypass")
+        }
+    }
+
+    /**
+     * UNBOUND UDP socket scoped to [n] — for FIXED-port listeners.
+     * Java's `DatagramSocket()` constructor auto-binds to an ephemeral port, so
+     * a later `bind(port)` always throws "already bound" (the probe's
+     * `listening on []` bug — Evan 2026-11-18). `DatagramSocket(null)` stays
+     * unbound until the caller binds its fixed port.
+     */
+    fun newDatagramSocketUnbound(cm: ConnectivityManager?, n: Network): ScopedSocket<DatagramSocket> {
+        val s = java.net.DatagramSocket(null)
         try {
             n.bindSocket(s)
             return ScopedSocket(s, "bindSocket")
         } catch (e: IOException) {
             s.close()
-            return ScopedSocket(withinBoundNetwork(cm, n) { DatagramSocket() }, "inherited-eperm-bypass")
+            return ScopedSocket(withinBoundNetwork(cm, n) { java.net.DatagramSocket(null) }, "inherited-eperm-bypass")
         }
     }
 
-    /** TCP socket bound onto [n], then connected to [addr]. */
+    /** TCP socket bound onto [n], then connected to [addr] — connect runs
+     *  INSIDE the bound window on the bypass path (route stamped at connect). */
     fun newTcpSocket(cm: ConnectivityManager?, n: Network, addr: InetSocketAddress, timeoutMs: Int): ScopedSocket<Socket> {
         val s = Socket()
         try {
             n.bindSocket(s)
         } catch (e: IOException) {
             s.close()
-            val created = withinBoundNetwork(cm, n) { Socket() }
-            try {
-                created.connect(addr, timeoutMs)
-                return ScopedSocket(created, "inherited-eperm-bypass")
-            } catch (e2: Exception) {
-                created.close()
-                throw e2
+            val created = withinBoundNetwork(cm, n) {
+                Socket().also { it.connect(addr, timeoutMs) }
             }
+            return ScopedSocket(created, "inherited-eperm-bypass")
         }
         s.connect(addr, timeoutMs)
         return ScopedSocket(s, "bindSocket")

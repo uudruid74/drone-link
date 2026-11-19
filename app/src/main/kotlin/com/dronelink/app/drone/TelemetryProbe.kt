@@ -34,16 +34,31 @@ class TelemetryProbe(
     fun start() {
         if (running) return
         running = true
+        // Bind the DRONE NETWORK's own address, never wildcard: a 0.0.0.0 bind
+        // rides the process default network (mobile data, 192.0.0.0/27) — not
+        // the drone LAN (192.168.1.0/24) — and the phone's home WiFi shares
+        // 192.168.1.x, so wildcard cannot even tell them apart (Evan 2026-11-18:
+        // "It's not listening on the right network").
+        val localAddr: java.net.Inet4Address? = cm?.getLinkProperties(network)?.linkAddresses
+            ?.mapNotNull { it.address }
+            ?.filterIsInstance<java.net.Inet4Address>()
+            ?.firstOrNull()
+        if (localAddr == null) {
+            DebugLog.log("probe", "no IPv4 address on ${network} — probe not started")
+            running = false
+            return
+        }
+        DebugLog.log("probe", "binding on drone-net address $localAddr")
         for (port in ports) {
             val scoped = try {
-                ScopedSockets.newDatagramSocket(cm, network)
+                ScopedSockets.newDatagramSocketUnbound(cm, network)
             } catch (e: Exception) {
                 DebugLog.log("probe", "port $port skipped: ${e.message}")
                 continue
             }
             val s = scoped.socket
             try {
-                s.bind(java.net.InetSocketAddress(port))
+                s.bind(java.net.InetSocketAddress(localAddr, port))
             } catch (e: Exception) {
                 // Port busy (another app or SO_REUSEADDR rules) — skip quietly.
                 s.close()
