@@ -2,6 +2,7 @@ package com.dronelink.app.video
 
 import com.dronelink.app.debug.DebugLog
 import java.io.BufferedOutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -30,7 +31,9 @@ class MjpegHttpServer(
 
     fun start() {
         if (running) return
-        val ss = ServerSocket(port, 16, java.net.InetAddress.getByName("0.0.0.0"))
+        val ss = ServerSocket()
+        ss.reuseAddress = true
+        ss.bind(InetSocketAddress(port), 16)
         serverSocket = ss
         running = true
         DebugLog.log(tag, "HTTP MJPEG proxy on :$boundPort (/video, /snapshot)")

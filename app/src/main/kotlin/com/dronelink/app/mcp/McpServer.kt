@@ -1,5 +1,6 @@
 package com.dronelink.app.mcp
 
+import com.dronelink.app.BuildConfig
 import com.dronelink.app.drone.DroneEngine
 import com.dronelink.app.video.VideoFeed
 import org.json.JSONArray
@@ -7,7 +8,7 @@ import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
-import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -56,7 +57,6 @@ class McpServer(
     companion object {
         const val PROTOCOL_VERSION = "2025-03-26"
         const val SERVER_NAME = "drone-ctl"
-        const val SERVER_VERSION = "0.3.0"
 
         private fun obj(vararg pairs: Pair<String, Any?>) = JSONObject().apply {
             for ((k, v) in pairs) putOpt(k, v)
@@ -202,7 +202,9 @@ class McpServer(
 
     fun start() {
         if (running) return
-        val ss = ServerSocket(port, 50, InetAddress.getByName("0.0.0.0"))
+        val ss = ServerSocket()
+        ss.reuseAddress = true
+        ss.bind(InetSocketAddress(port), 50)
         serverSocket = ss
         running = true
         acceptThread = Thread {
@@ -324,7 +326,7 @@ class McpServer(
                 .put("capabilities", JSONObject().put("tools", JSONObject()))
                 .put("serverInfo", JSONObject()
                     .put("name", SERVER_NAME)
-                    .put("version", SERVER_VERSION)))
+                    .put("version", BuildConfig.VERSION_NAME)))
             "ping" -> success(id, JSONObject())
             "tools/list" -> {
                 val arr = JSONArray()

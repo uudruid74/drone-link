@@ -1,5 +1,6 @@
 package com.dronelink.app.mcp
 
+import com.dronelink.app.BuildConfig
 import com.dronelink.app.drone.DroneEngine
 import com.dronelink.app.drone.DroneTransport
 import org.json.JSONObject
@@ -63,7 +64,7 @@ class McpServerTest {
         assertEquals("2025-03-26", result.getString("protocolVersion"))
         assertTrue(result.getJSONObject("capabilities").has("tools"))
         assertEquals("drone-ctl", result.getJSONObject("serverInfo").getString("name"))
-        assertEquals("0.3.0", result.getJSONObject("serverInfo").getString("version"))
+        assertEquals(BuildConfig.VERSION_NAME, result.getJSONObject("serverInfo").getString("version"))
     }
 
     // ---- tools/list ----
