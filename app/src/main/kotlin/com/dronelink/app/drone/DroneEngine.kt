@@ -492,13 +492,25 @@ class DroneEngine(
     fun cmdTakeoff(): Map<String, Any?> {
         requireConnected()
         pulse("takeoff", 1.0)
-        return linkedMapOf("ok" to true, "cmd" to "takeoff")
+        return linkedMapOf(
+            "ok" to true,
+            "cmd" to "takeoff",
+            "status" to status(),
+            "verified" to false,
+            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+        )
     }
 
     fun cmdLand(): Map<String, Any?> {
         requireConnected()
         pulse("land", 1.0)
-        return linkedMapOf("ok" to true, "cmd" to "land")
+        return linkedMapOf(
+            "ok" to true,
+            "cmd" to "land",
+            "status" to status(),
+            "verified" to false,
+            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+        )
     }
 
     fun cmdEmergencyLand(): Map<String, Any?> {
@@ -511,13 +523,25 @@ class DroneEngine(
     fun cmdFlyHome(): Map<String, Any?> {
         requireConnected()
         pulse("returnhome", 5.0)
-        return linkedMapOf("ok" to true, "cmd" to "fly_home")
+        return linkedMapOf(
+            "ok" to true,
+            "cmd" to "fly_home",
+            "status" to status(),
+            "verified" to false,
+            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+        )
     }
 
     fun cmdFly(roll: Double, pitch: Double, throttle: Double, yaw: Double): Map<String, Any?> {
         requireConnected()
         setSticks(roll, pitch, throttle, yaw)
-        return linkedMapOf("ok" to true, "axes" to axes.toList())
+        return linkedMapOf(
+            "ok" to true,
+            "axes" to axes.toList(),
+            "status" to status(),
+            "verified" to false,
+            "reason" to "sticks applied locally; aircraft confirmation requires rx telemetry",
+        )
     }
 
     fun cmdTrajectory(waypoints: List<Map<String, Any?>>): Map<String, Any?> {
@@ -529,31 +553,55 @@ class DroneEngine(
     fun cmdStopTrajectory(): Map<String, Any?> {
         clearTrajectory()
         axes = DroneProtocol.NEUTRAL_AXES.copyOf()
-        return linkedMapOf("ok" to true)
+        return linkedMapOf("ok" to true, "status" to status())
     }
 
     fun cmdCamera(value: Int): Map<String, Any?> {
         requireConnected()
         cam = value
         raw(byteArrayOf(6, value.toByte()))
-        return linkedMapOf("ok" to true, "cam" to cam)
+        return linkedMapOf(
+            "ok" to true,
+            "cam" to cam,
+            "status" to status(),
+            "verified" to false,
+            "reason" to "UDP datagram sent; aircraft confirmation requires rx telemetry",
+        )
     }
 
     fun cmdHeadless(enabled: Boolean): Map<String, Any?> {
         requireConnected()
         headless = enabled
-        return linkedMapOf("ok" to true, "headless" to headless)
+        return linkedMapOf(
+            "ok" to true,
+            "headless" to headless,
+            "status" to status(),
+            "verified" to false,
+            "reason" to "local mode flag set; effective from next transmitted packet",
+        )
     }
 
     fun cmdCalibrate(): Map<String, Any?> {
         requireConnected()
         pulse("gyro", 2.0)
-        return linkedMapOf("ok" to true, "cmd" to "calibrate")
+        return linkedMapOf(
+            "ok" to true,
+            "cmd" to "calibrate",
+            "status" to status(),
+            "verified" to false,
+            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+        )
     }
 
     fun cmdSetGear(value: Int): Map<String, Any?> {
         setGearRaw(value)
-        return linkedMapOf("ok" to true, "gear" to gear)
+        return linkedMapOf(
+            "ok" to true,
+            "gear" to gear,
+            "status" to status(),
+            "verified" to false,
+            "reason" to "gear is local stick scaling; effective from next transmitted packet",
+        )
     }
 
     fun cmdVideoUrl(): Map<String, Any?> =

@@ -74,16 +74,17 @@ class McpServerTest {
         val names = mutableListOf<String>()
         for (i in 0 until tools.length()) names += tools.getJSONObject(i).getString("name")
         // the 12 verbatim tools from drone_mcp.py:286-400 + status/video_url
-        // + v0.3.0 fly_home/snapshot
+        // + v0.3.0 fly_home/snapshot/debug_log
         assertEquals(
             listOf(
                 "connect", "disconnect", "takeoff", "land", "emergency_land",
                 "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "headless",
                 "calibrate", "set_gear", "status", "video_url", "snapshot",
+                "debug_log",
             ),
             names,
         )
-        assertEquals(16, tools.length())
+        assertEquals(17, tools.length())
     }
 
     @Test fun flySchemaVerbatim() {

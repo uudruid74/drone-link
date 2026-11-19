@@ -75,7 +75,7 @@ class McpServerV03Test {
         for (i in 0 until tools.length()) names += tools.getJSONObject(i).getString("name")
         assertTrue(names.contains("fly_home"))
         assertTrue(names.contains("snapshot"))
-        assertEquals(16, tools.length())
+        assertEquals(17, tools.length())
     }
 
     @Test fun flyHomeToolRuns() {
@@ -134,5 +134,62 @@ class McpServerV03Test {
         assertEquals("http://100.64.0.1:8080/video", call.getString("url"))
         assertEquals("http://100.64.0.1:8080/snapshot", call.getString("snapshot"))
         assertFalse(call.getString("url").contains("192.168.1.1"))
+    }
+
+    // ---- liveness readback (t_b43707a1) ----
+
+    private fun assertLivenessReadback(call: JSONObject, expectCmd: String) {
+        assertEquals(true, call.getBoolean("ok"))
+        assertEquals(expectCmd, call.getString("cmd"))
+        val st = call.getJSONObject("status")
+        for (k in listOf(
+            "connected", "variant", "gear", "axes", "sent", "rx",
+            "last_telemetry", "heartbeat_active",
+        )) {
+            assertTrue("status missing $k", st.has(k))
+        }
+        assertEquals(false, call.getBoolean("verified"))
+        assertTrue("no reason for unverified command", call.has("reason"))
+    }
+
+    @Test fun takeoffReturnsLivenessReadback() {
+        assertLivenessReadback(JSONObject(resultText(callTool("takeoff"))), "takeoff")
+    }
+
+    @Test fun landReturnsLivenessReadback() {
+        assertLivenessReadback(JSONObject(resultText(callTool("land"))), "land")
+    }
+
+    @Test fun flyHomeReturnsLivenessReadback() {
+        assertLivenessReadback(JSONObject(resultText(callTool("fly_home"))), "fly_home")
+    }
+
+    @Test fun flyReturnsLivenessReadback() {
+        val call = JSONObject(resultText(callTool(
+            "fly", "roll" to 0.5, "pitch" to 0.0, "throttle" to 0.3, "yaw" to 0.0,
+        )))
+        assertEquals(true, call.getBoolean("ok"))
+        // backward compat: commanded-sticks echo preserved
+        val axes = call.getJSONArray("axes")
+        assertEquals(4, axes.length())
+        // readback mirrors the engine's actual state (same source as status tool)
+        assertEquals(axes.toString(), call.getJSONObject("status").getJSONArray("axes").toString())
+        assertEquals(false, call.getBoolean("verified"))
+        assertTrue("no reason for unverified command", call.has("reason"))
+    }
+
+    @Test fun setGearReturnsLivenessReadback() {
+        val call = JSONObject(resultText(callTool("set_gear", "gear" to 2)))
+        assertEquals(true, call.getBoolean("ok"))
+        assertEquals(2, call.getInt("gear"))
+        assertEquals(2, call.getJSONObject("status").getInt("gear"))
+        assertEquals(false, call.getBoolean("verified"))
+        assertTrue("no reason for unverified command", call.has("reason"))
+    }
+
+    @Test fun stopTrajectoryReturnsStatusNotBareOk() {
+        val call = JSONObject(resultText(callTool("stop_trajectory")))
+        assertEquals(true, call.getBoolean("ok"))
+        assertEquals(false, call.getJSONObject("status").getBoolean("trajectory_active"))
     }
 }
