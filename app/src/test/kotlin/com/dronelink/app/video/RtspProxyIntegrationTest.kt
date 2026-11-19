@@ -1,5 +1,6 @@
 package com.dronelink.app.video
 
+import com.dronelink.app.net.JavaServerSocketFactory
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -178,7 +179,7 @@ class RtspProxyIntegrationTest {
         assertArrayEquals(drone.jpeg, client.latestFrame)
 
         // HTTP proxy on top of the client feed.
-        val http = MjpegHttpServer(client, 0)
+        val http = MjpegHttpServer(client, 0, socketFactory = JavaServerSocketFactory)
         http.start()
         try {
             val snap = httpGet(http.boundPort, "/snapshot", readMs = 3000)

@@ -1,5 +1,6 @@
 package com.dronelink.app.video
 
+import com.dronelink.app.BuildConfig
 import com.dronelink.app.debug.DebugLog
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -222,7 +223,7 @@ class RtspClient(
         val sb = StringBuilder()
         sb.append("$method $uri RTSP/1.0\r\n")
         for (h in headers) sb.append(h).append("\r\n")
-        sb.append("User-Agent: DroneLink/0.3.0\r\n")
+        sb.append("User-Agent: DroneLink/${BuildConfig.VERSION_NAME}\r\n")
         sb.append("\r\n")
         out.write(sb.toString().toByteArray(StandardCharsets.UTF_8))
         out.flush()

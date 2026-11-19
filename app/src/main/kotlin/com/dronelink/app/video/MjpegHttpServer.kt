@@ -1,10 +1,11 @@
 package com.dronelink.app.video
 
 import com.dronelink.app.debug.DebugLog
+import com.dronelink.app.net.AcceptedSocket
+import com.dronelink.app.net.ListeningSocket
+import com.dronelink.app.net.OsServerSocketFactory
+import com.dronelink.app.net.ServerSocketFactory
 import java.io.BufferedOutputStream
-import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Socket
 import java.nio.charset.StandardCharsets
 
 /**
@@ -21,26 +22,25 @@ class MjpegHttpServer(
     private val feed: VideoFeed,
     private val port: Int = 8080,
     private val tag: String = "video",
+    private val socketFactory: ServerSocketFactory = OsServerSocketFactory,
 ) {
-    private var serverSocket: ServerSocket? = null
+    private var listener: ListeningSocket? = null
     private var acceptThread: Thread? = null
     @Volatile
     private var running = false
 
-    val boundPort: Int get() = serverSocket?.localPort ?: port
+    val boundPort: Int get() = listener?.boundPort ?: port
 
     fun start() {
         if (running) return
-        val ss = ServerSocket()
-        ss.reuseAddress = true
-        ss.bind(InetSocketAddress(port), 16)
-        serverSocket = ss
+        val ls = socketFactory.listenV4(port, 16)
+        listener = ls
         running = true
         DebugLog.log(tag, "HTTP MJPEG proxy on :$boundPort (/video, /snapshot)")
         acceptThread = Thread {
             while (running) {
                 val client = try {
-                    ss.accept()
+                    ls.accept()
                 } catch (e: Exception) {
                     break
                 }
@@ -51,15 +51,15 @@ class MjpegHttpServer(
 
     fun stop() {
         running = false
-        runCatching { serverSocket?.close() }
+        runCatching { listener?.close() }
         acceptThread?.join(1000)
     }
 
-    private fun handleClient(client: Socket) {
-        client.use { s ->
-            s.soTimeout = 20000
-            val inp = s.getInputStream()
-            val out = BufferedOutputStream(s.getOutputStream())
+    private fun handleClient(client: AcceptedSocket) {
+        try {
+            client.setSoTimeout(20000)
+            val inp = client.inputStream()
+            val out = BufferedOutputStream(client.outputStream())
             val requestLine = readLine(inp) ?: return
             val parts = requestLine.split(" ")
             if (parts.size < 2) return
@@ -71,16 +71,18 @@ class MjpegHttpServer(
                 if (line == null || line.isEmpty()) break
             }
             when {
-                method == "GET" && path == "/video" -> stream(out, s)
+                method == "GET" && path == "/video" -> stream(out)
                 method == "GET" && path == "/snapshot" -> snapshot(out)
                 method == "GET" -> status(out)
                 else -> response(out, 404, "text/plain", "not found\n")
             }
             out.flush()
+        } finally {
+            client.close()
         }
     }
 
-    private fun stream(out: BufferedOutputStream, s: Socket) {
+    private fun stream(out: BufferedOutputStream) {
         val head = "HTTP/1.1 200 OK\r\n" +
             "Content-Type: multipart/x-mixed-replace; boundary=droneframe\r\n" +
             "Cache-Control: no-cache\r\n" +
@@ -93,12 +95,16 @@ class MjpegHttpServer(
             writePart(out, frame)
             seen = feed.frameVersion
         }
-        while (running && !s.isClosed) {
+        while (running) {
             val v = feed.awaitFrame(seen, 10000)
             if (v == seen) continue  // timeout — keep the stream alive
             seen = v
             val frame = feed.latestFrame ?: continue
-            writePart(out, frame)
+            try {
+                writePart(out, frame)
+            } catch (e: java.io.IOException) {
+                break  // client went away
+            }
         }
     }
 

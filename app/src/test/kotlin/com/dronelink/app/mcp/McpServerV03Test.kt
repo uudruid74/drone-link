@@ -2,6 +2,7 @@ package com.dronelink.app.mcp
 
 import com.dronelink.app.drone.DroneEngine
 import com.dronelink.app.drone.DroneTransport
+import com.dronelink.app.net.JavaServerSocketFactory
 import com.dronelink.app.video.VideoFeed
 import org.json.JSONObject
 import org.junit.After
@@ -39,7 +40,11 @@ class McpServerV03Test {
     @Before
     fun setUp() {
         engine = DroneEngine(RecordingTransport(), 10)
-        server = McpServer(engine, 0) { emergencyLandCalled = true }
+        server = McpServer(
+            engine, 0,
+            onEmergencyLand = { emergencyLandCalled = true },
+            socketFactory = JavaServerSocketFactory,
+        )
         server.start()
     }
 

@@ -2,15 +2,16 @@ package com.dronelink.app.mcp
 
 import com.dronelink.app.BuildConfig
 import com.dronelink.app.drone.DroneEngine
+import com.dronelink.app.net.AcceptedSocket
+import com.dronelink.app.net.ListeningSocket
+import com.dronelink.app.net.OsServerSocketFactory
+import com.dronelink.app.net.ServerSocketFactory
 import com.dronelink.app.video.VideoFeed
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -39,6 +40,7 @@ class McpServer(
     private val engine: DroneEngine,
     private val port: Int = 8000,
     private val onEmergencyLand: (() -> Unit)? = null,
+    private val socketFactory: ServerSocketFactory = OsServerSocketFactory,
 ) {
     /** Live video feed (RTSP proxy) for the snapshot tool. Set by the service. */
     @Volatile
@@ -190,28 +192,26 @@ class McpServer(
 
     private val toolsByName = tools.associateBy { it.name }
 
-    private var serverSocket: ServerSocket? = null
+    private var listener: ListeningSocket? = null
     private var acceptThread: Thread? = null
     @Volatile
     private var running = false
 
     val boundPort: Int
-        get() = serverSocket?.localPort ?: port
+        get() = listener?.boundPort ?: port
 
     // ---------------------------------------------------------------- lifecycle
 
     fun start() {
         if (running) return
-        val ss = ServerSocket()
-        ss.reuseAddress = true
-        ss.bind(InetSocketAddress(port), 50)
-        serverSocket = ss
+        val ls = socketFactory.listenV4(port, 50)
+        listener = ls
         running = true
         acceptThread = Thread {
             while (running) {
                 val client = try {
-                    ss.accept()
-                } catch (e: IOException) {
+                    ls.accept()
+                } catch (e: Exception) {
                     break
                 }
                 Thread { handleClient(client) }.apply { isDaemon = true; start() }
@@ -221,17 +221,17 @@ class McpServer(
 
     fun stop() {
         running = false
-        runCatching { serverSocket?.close() }
+        runCatching { listener?.close() }
         acceptThread?.join(1000)
     }
 
     // ------------------------------------------------------------------- HTTP
 
-    private fun handleClient(client: Socket) {
-        client.use { s ->
-            s.soTimeout = 5000
-            val input = BufferedInputStream(s.getInputStream())
-            val output = BufferedOutputStream(s.getOutputStream())
+    private fun handleClient(client: AcceptedSocket) {
+        try {
+            client.setSoTimeout(5000)
+            val input = BufferedInputStream(client.inputStream())
+            val output = BufferedOutputStream(client.outputStream())
 
             val requestLine = readLine(input) ?: return
             val parts = requestLine.split(" ")
@@ -262,6 +262,8 @@ class McpServer(
                 else -> Triple(404, "text/plain", "not found\n")
             }
             writeResponse(output, status, contentType, respBody)
+        } finally {
+            client.close()
         }
     }
 
