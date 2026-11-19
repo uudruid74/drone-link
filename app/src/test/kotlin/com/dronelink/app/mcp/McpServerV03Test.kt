@@ -36,6 +36,7 @@ class McpServerV03Test {
     private lateinit var engine: DroneEngine
     private lateinit var server: McpServer
     private var emergencyLandCalled = false
+    private var disconnectCalled = false
 
     @Before
     fun setUp() {
@@ -43,6 +44,7 @@ class McpServerV03Test {
         server = McpServer(
             engine, 0,
             onEmergencyLand = { emergencyLandCalled = true },
+            onDisconnect = { disconnectCalled = true },
             socketFactory = JavaServerSocketFactory,
         )
         server.start()
@@ -139,6 +141,30 @@ class McpServerV03Test {
         assertEquals("http://100.64.0.1:8080/video", call.getString("url"))
         assertEquals("http://100.64.0.1:8080/snapshot", call.getString("snapshot"))
         assertFalse(call.getString("url").contains("192.168.1.1"))
+    }
+
+    @Test fun videoUrlUsesLiveResolverOverStaleFallback() {
+        server.videoHost = "172.30.208.69"   // stale/bogus fallback
+        server.videoHostResolver = { "100.122.172.27" }
+        val res = callTool("video_url")
+        val call = JSONObject(resultText(res))
+        assertEquals("http://100.122.172.27:8080/video", call.getString("url"))
+    }
+
+    @Test fun videoUrlRefusesBogusFallbackWhenTailnetDown() {
+        server.videoHost = "172.30.208.69"   // the exact bad-advertise bug
+        server.videoHostResolver = { null }   // tailnet IPv4 not up
+        val res = callTool("video_url")
+        val call = JSONObject(resultText(res))
+        assertEquals(false, call.getBoolean("ok"))
+        assertTrue(call.getString("error").contains("tailnet"))
+    }
+
+    @Test fun disconnectStopsProxies() {
+        val res = callTool("disconnect")
+        val call = JSONObject(resultText(res))
+        assertEquals(true, call.getBoolean("ok"))
+        assertTrue("onDisconnect hook must fire", disconnectCalled)
     }
 
     // ---- liveness readback (t_b43707a1) ----

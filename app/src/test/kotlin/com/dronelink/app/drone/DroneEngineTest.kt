@@ -48,7 +48,8 @@ class DroneEngineTest {
         val (d, _) = engine(10)
         d.axes = intArrayOf(DroneProtocol.C, DroneProtocol.C, 0, DroneProtocol.C)
         d.pulse("takeoff", 1.0)
-        assertEquals("03 66 80 80 00 80 01 81 99", hex(d.packet()))
+        // v0.3.1: takeoff sends throttle with the flag (flag alone doesn't lift)
+        assertEquals("03 66 80 80 3c 80 01 bd 99", hex(d.packet()))
     }
 
     @Test fun tcHeadless() {

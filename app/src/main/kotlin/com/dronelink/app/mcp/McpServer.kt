@@ -40,13 +40,23 @@ class McpServer(
     private val engine: DroneEngine,
     private val port: Int = 8000,
     private val onEmergencyLand: (() -> Unit)? = null,
+    private val onDisconnect: (() -> Unit)? = null,
     private val socketFactory: ServerSocketFactory = OsServerSocketFactory,
 ) {
     /** Live video feed (RTSP proxy) for the snapshot tool. Set by the service. */
     @Volatile
     var videoFeed: VideoFeed? = null
 
-    /** Host the laptop uses to reach the app (tailnet IP); set by the service. */
+    /**
+     * Resolves the host the laptop uses to reach the app (tailnet IPv4).
+     * Called freshly on every `video_url` — never cache a stale guess at
+     * startup (tailscale may not be up yet, and a wrong host is worse than
+     * an explicit error). Set by the service.
+     */
+    @Volatile
+    var videoHostResolver: (() -> String?)? = null
+
+    /** Fallback host (legacy field; prefer [videoHostResolver]). */
     @Volatile
     var videoHost: String = "127.0.0.1"
 
@@ -364,7 +374,14 @@ class McpServer(
         return try {
             val result = when (name) {
                 "connect" -> engine.cmdConnect()
-                "disconnect" -> engine.cmdDisconnect()
+                "disconnect" -> {
+                    val r = engine.cmdDisconnect()
+                    // Stop the control/rx loops AND tear down the proxies
+                    // (RTSP session + HTTP listener unbind). The MCP server
+                    // itself stays up so `connect` can resume.
+                    onDisconnect?.invoke()
+                    r
+                }
                 "takeoff" -> engine.cmdTakeoff()
                 "land" -> engine.cmdLand()
                 "emergency_land" -> {
@@ -388,8 +405,17 @@ class McpServer(
                 "set_gear" -> engine.cmdSetGear(args.optInt("gear", 1))
                 "status" -> engine.status()
                 "video_url" -> {
-                    val base = "http://$videoHost:$videoPort"
-                    linkedMapOf("ok" to true, "url" to "$base/video", "snapshot" to "$base/snapshot")
+                    val host = videoHostResolver?.invoke() ?: videoHost
+                    if (host.isEmpty() || host == "127.0.0.1" || host.startsWith("172.")) {
+                        linkedMapOf(
+                            "ok" to false,
+                            "error" to "tailnet IPv4 not up yet — video URL unavailable " +
+                                "(start Tailscale; 100.x address required)",
+                        )
+                    } else {
+                        val base = "http://$host:$videoPort"
+                        linkedMapOf("ok" to true, "url" to "$base/video", "snapshot" to "$base/snapshot")
+                    }
                 }
                 "snapshot" -> snapshotTool()
                 "debug_log" -> linkedMapOf(

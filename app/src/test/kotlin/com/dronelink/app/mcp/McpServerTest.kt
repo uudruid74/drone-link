@@ -163,11 +163,12 @@ class McpServerTest {
     }
 
     @Test fun callVideoUrl() {
+        server.videoHost = "100.64.0.1"
         val res = rpc("tools/call", JSONObject().put("name", "video_url"))
         val text = res.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
         // v0.3.0: video_url serves the proxied MJPEG stream, not the raw rtsp://
-        assertEquals("http://127.0.0.1:8080/video", JSONObject(text).getString("url"))
-        assertEquals("http://127.0.0.1:8080/snapshot", JSONObject(text).getString("snapshot"))
+        assertEquals("http://100.64.0.1:8080/video", JSONObject(text).getString("url"))
+        assertEquals("http://100.64.0.1:8080/snapshot", JSONObject(text).getString("snapshot"))
     }
 
     @Test fun callFlyReturnsAxes() {

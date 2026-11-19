@@ -64,6 +64,16 @@ class RtspClient(
     var sessionId: String? = null
         private set
 
+    /** RTP datagrams received (after SETUP/PLAY). 0 while the camera is
+     * negotiated but not actually streaming — the black-frame diagnostic. */
+    @Volatile
+    var rtpPackets: Long = 0
+        private set
+
+    @Volatile
+    var rtpBytes: Long = 0
+        private set
+
     @Volatile
     private var _frameVersion = 0L
 
@@ -172,16 +182,34 @@ class RtspClient(
                 lock.notifyAll()
             }
         }
+        // Black-frame diagnostic: after PLAY ok the camera should push RTP
+        // datagrams. Log the first packet and then every ~500 so a session
+        // that negotiated but never streams is visible in the debug log.
+        var logEvery = 1L
         while (running) {
             val pkt = DatagramPacket(buf, buf.size)
             val len = try {
                 s.receive(pkt)
                 pkt.length
             } catch (e: SocketTimeoutException) {
+                if (rtpPackets == 0L && logEvery == 1L) {
+                    DebugLog.log(tag, "rtp: waiting for first datagram after PLAY ok...")
+                    logEvery = 0L
+                }
                 continue
             } catch (e: Exception) {
                 if (running) DebugLog.log(tag, "rtp loop stopped: ${e.message}")
                 break
+            }
+            rtpPackets++
+            rtpBytes += len
+            if (rtpPackets >= logEvery) {
+                DebugLog.log(
+                    tag,
+                    "rtp: pkts=$rtpPackets bytes=$rtpBytes frames=${assembler.frames} " +
+                        "scanned=${assembler.bytesScanned}",
+                )
+                logEvery = rtpPackets + 500
             }
             val payload = rtpPayload(buf, len)
             if (payload != null) {

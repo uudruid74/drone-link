@@ -90,7 +90,7 @@ class DroneLinkService : Service() {
         if (mcp != null) return
         val e = DroneEngine(transport)
         engine = e
-        val s = McpServer(e, onEmergencyLand = ::onEmergencyLand)
+        val s = McpServer(e, onEmergencyLand = ::onEmergencyLand, onDisconnect = ::onDisconnect)
         try {
             s.start()
             mcp = s
@@ -163,8 +163,8 @@ class DroneLinkService : Service() {
                     videoHttp = http
                     mcp?.videoFeed = proxy
                     mcp?.videoPort = http.boundPort
-                    mcp?.videoHost = guessExternalHost() ?: "127.0.0.1"
-                    DebugLog.log("video", "proxy up: ${mcp?.videoHost}:${http.boundPort} (rtsp err=${proxy.error})")
+                    mcp?.videoHostResolver = { guessExternalHost() }
+                    DebugLog.log("video", "proxy up: :${http.boundPort} (rtsp err=${proxy.error})")
                 } catch (e: Exception) {
                     DebugLog.log("service", "video proxy failed: ${e.message}")
                 }
@@ -241,26 +241,35 @@ class DroneLinkService : Service() {
     }
 
     /**
-     * Best guess of an address on THIS phone that the laptop can reach over
-     * tailnet (for the proxied video URL). Evan 2026-11-18: never advertise
-     * tailnet IPv6 (fd7a) — "IPv6 routing isn't stable here." Prefer tailnet
-     * IPv4 (100.x), then any other non-link-local, non-drone-LAN IPv4. No IPv6.
+     * MCP `disconnect`: the engine stops its control/rx loops; this tears
+     * down the RTSP session + HTTP MJPEG proxy (unbind the video sockets)
+     * so the drone's camera link and the laptop-facing HTTP listener close.
+     * The autonomous heartbeat and the MCP server itself stay up.
+     */
+    fun onDisconnect() {
+        DebugLog.log("service", "MCP disconnect — stopping video proxy")
+        videoHttp?.stop()
+        videoHttp = null
+        proxyClient?.stop()
+        proxyClient = null
+    }
+
+    /**
+     * The address on THIS phone that the laptop can reach over tailnet (for
+     * the proxied video URL). Evan 2026-11-18: never advertise tailnet IPv6
+     * (fd7a) — "IPv6 routing isn't stable here." The ONLY correct candidate is
+     * the tailnet IPv4 (100.x, CGNAT 100.64/10). Anything else (RFC1918
+     * wlan/172.x bridges, etc.) is NOT reachable by the laptop over tailnet
+     * and must never be advertised — a wrong URL is worse than none. Returns
+     * null when no tailnet IPv4 is present (tailscale not up yet).
      */
     private fun guessExternalHost(): String? {
         return try {
             val ifaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
-            val v4 = ifaces.toList()
-                .filter { i ->
-                    val name = i.name.lowercase()
-                    !(name.contains("wlan") || name.contains("rmnet"))
-                }
+            ifaces.toList()
                 .flatMap { it.inetAddresses.toList() }
-                .filter {
-                    !it.isLoopbackAddress && !it.isLinkLocalAddress && !it.hostAddress!!.contains(":")
-                }
                 .map { it.hostAddress!! }
-                .filter { !it.startsWith("192.168.1.") }
-            v4.firstOrNull { it.startsWith("100.") } ?: v4.firstOrNull()
+                .firstOrNull { it.startsWith("100.") }
         } catch (_: Exception) {
             null
         }

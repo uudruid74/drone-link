@@ -54,6 +54,43 @@ class DroneEngineV03Test {
         assertEquals(0, d.packet()[6].toInt() and 0x20)
     }
 
+    // ---- takeoff lift: flag + throttle together (TC 9B) ----
+
+    @Test fun tcTakeoffSendsThrottleWithFlag() {
+        val (d, _) = engine(10)
+        d.axes = intArrayOf(DroneProtocol.C, DroneProtocol.C, 0, DroneProtocol.C)
+        d.pulse("takeoff", 1.0)
+        val pkt = d.packet()
+        assertEquals(1, pkt[6].toInt() and 0x01)   // FLAG_TAKEOFF
+        assertEquals(DroneProtocol.TAKEOFF_THROTTLE.toByte(), pkt[4])  // throttle axis
+    }
+
+    @Test fun tcTakeoffRespectsUserThrottle() {
+        val (d, _) = engine(10)
+        d.axes = intArrayOf(DroneProtocol.C, DroneProtocol.C, 30, DroneProtocol.C)
+        d.pulse("takeoff", 1.0)
+        val pkt = d.packet()
+        assertEquals(30.toByte(), pkt[4])            // user throttle preserved
+    }
+
+    @Test fun glTakeoffDoesNotOverrideThrottle() {
+        // GL merges the land flag into bit 0, so takeoff-throttle synthesis
+        // must never apply to the 21-byte variant. Throttle is byte 5 in GL.
+        val (d, _) = engine(82)
+        d.axes = intArrayOf(128, 128, 0, 128)
+        d.pulse("takeoff", 1.0)
+        assertEquals(0.toByte(), d.packet()[5])
+    }
+
+    @Test fun tcTakeoffThrottleExpiresWithPulse() {
+        var clock = 100.0
+        val d = DroneEngine(RecordingTransport(), 10) { clock }
+        d.pulse("takeoff", 1.0)
+        assertEquals(DroneProtocol.TAKEOFF_THROTTLE.toByte(), d.packet()[4])
+        clock = 101.1  // pulse expired
+        assertEquals(0.toByte(), d.packet()[4])
+    }
+
     // ---- emergency_land kill switch ----
 
     @Test fun emergencyLandEngagesKillSwitch() {

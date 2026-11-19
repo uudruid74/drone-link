@@ -40,6 +40,12 @@ object DroneProtocol {
     const val FLAG_RETURN = 0x20          // +32 isFastReturn (Return-to-Home), byte 6 flags
     const val FLAG_CALIBRATE = 0x80
 
+    /** Throttle deflection (0..127) sent together with FLAG_TAKEOFF on the
+     * TC(9B) variant. Flag alone is not enough — the drone ACKs the arm
+     * flag but lifts only if the throttle axis is non-zero. Mid-range
+     * (gear-2 scale) lift by default. */
+    const val TAKEOFF_THROTTLE = 60
+
     // Telemetry auto-detect: first byte -> GL (21-byte) vs TC (9-byte)
     val GL_IDS = (90..101).toSet() + setOf(103, 82, 85, 88)
 
@@ -272,7 +278,7 @@ class DroneEngine(
         guardKill()
         var r = axes[0]
         var p = axes[1]
-        val t = axes[2]
+        var t = axes[2]
         var y = axes[3]
         // clamp sticks to >= 1 so "center-ish" isn't read as 0 (which is coerced)
         if (r < 1) r = 1
@@ -310,6 +316,14 @@ class DroneEngine(
             (if (headless) 16 else 0) +
             (if (home) DroneProtocol.FLAG_RETURN else 0) +
             (if (gyro) 128 else 0)
+        // Takeoff lift: flag alone is not enough on TC(9B) — the drone ACKs
+        // the arm flag but only lifts with a non-zero throttle axis. When the
+        // takeoff pulse is active and no user throttle is commanded, send the
+        // takeoff throttle together with the flag. (GL merges the land flag
+        // into bit 0, so this must stay TC-only.)
+        if (fly && variant == 10 && t == 0) {
+            t = DroneProtocol.TAKEOFF_THROTTLE
+        }
         val cs = (((r xor p) xor t) xor y) xor fl
         return byteArrayOf(3, 0x66, r.toByte(), p.toByte(), t.toByte(), y.toByte(),
             (fl and 255).toByte(), (cs and 255).toByte(), 0x99.toByte())
@@ -487,7 +501,11 @@ class DroneEngine(
         requireConnected()
         return linkedMapOf("ok" to true, "status" to status())
     }
-    fun cmdDisconnect(): Map<String, Any?> = linkedMapOf("ok" to true, "status" to status())
+    fun cmdDisconnect(): Map<String, Any?> {
+        guardKill()
+        disconnect()   // stop control/rx loops (autonomous heartbeat survives)
+        return linkedMapOf("ok" to true, "status" to status())
+    }
 
     fun cmdTakeoff(): Map<String, Any?> {
         requireConnected()
