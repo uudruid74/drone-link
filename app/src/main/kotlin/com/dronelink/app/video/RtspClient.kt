@@ -175,7 +175,11 @@ class RtspClient(
 
     private fun rtpLoop(s: DatagramSocket) {
         val buf = ByteArray(65536)
-        val assembler = MjpegAssembler { frame ->
+        // RFC 2435 depacketization: fragments placed by offset, frame done
+        // on the RTP marker bit — NOT SOI/EOI scanning (the 8-byte JPEG
+        // headers interleave with data and corrupt naively-concatenated
+        // frames).
+        val reassembler = Rfc2435Reassembler { frame ->
             synchronized(lock) {
                 _latestFrame = frame
                 _frameVersion++
@@ -203,17 +207,18 @@ class RtspClient(
             }
             rtpPackets++
             rtpBytes += len
+            // RTP header byte 1 bit 7 = marker (final fragment of a frame).
+            val marker = (buf[1].toInt() and 0x80) != 0
             if (rtpPackets >= logEvery) {
                 DebugLog.log(
                     tag,
-                    "rtp: pkts=$rtpPackets bytes=$rtpBytes frames=${assembler.frames} " +
-                        "scanned=${assembler.bytesScanned}",
+                    "rtp: pkts=$rtpPackets bytes=$rtpBytes frames=${reassembler.frames}",
                 )
                 logEvery = rtpPackets + 500
             }
             val payload = rtpPayload(buf, len)
             if (payload != null) {
-                assembler.feed(payload)
+                reassembler.feed(payload, marker)
             }
         }
     }

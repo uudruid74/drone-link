@@ -115,16 +115,32 @@ class RtspProxyIntegrationTest {
             out.flush()
         }
 
-        /** Send the JPEG as two RTP packets (SOI in first, EOI in second). */
+        /**
+         * Send the JPEG as two RFC 2435 RTP packets: each payload carries
+         * an 8-byte JPEG header (fragment offset in bytes 1..3 big-endian)
+         * followed by the fragment; the marker bit marks the final packet.
+         */
         private fun sendRtp(clientPort: Int) {
-            val s = DatagramSocket()
             val addr = InetSocketAddress("127.0.0.1", clientPort)
             val first = jpeg.copyOfRange(0, 20)
             val second = jpeg.copyOfRange(20, jpeg.size)
-            s.send(DatagramPacket(rtpPacket(first, seq = 0, marker = false), first.size + 12, addr))
+            val s = DatagramSocket()
+            s.send(DatagramPacket(rtpPacket(rfc2435Payload(0, first), seq = 0, marker = false), first.size + 8 + 12, addr))
             Thread.sleep(50)
-            s.send(DatagramPacket(rtpPacket(second, seq = 1, marker = true), second.size + 12, addr))
+            s.send(DatagramPacket(rtpPacket(rfc2435Payload(20, second), seq = 1, marker = true), second.size + 8 + 12, addr))
             s.close()
+        }
+
+        private fun rfc2435Payload(offset: Int, fragment: ByteArray): ByteArray {
+            val hdr = ByteArray(8)
+            hdr[1] = ((offset ushr 16) and 0xFF).toByte()
+            hdr[2] = ((offset ushr 8) and 0xFF).toByte()
+            hdr[3] = (offset and 0xFF).toByte()
+            hdr[4] = 0x01       // type
+            hdr[5] = 0x50       // Q
+            hdr[6] = 0x01       // width
+            hdr[7] = 0x0E       // height
+            return hdr + fragment
         }
 
         private fun rtpPacket(payload: ByteArray, seq: Int, marker: Boolean): ByteArray {
