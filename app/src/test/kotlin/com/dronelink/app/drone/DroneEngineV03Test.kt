@@ -159,6 +159,38 @@ class DroneEngineV03Test {
         assertFalse(d.connected)
     }
 
+    // ---- autonomous-bind + requireConnected (the no-lift root cause) ----
+
+    @Test fun autonomousBindLeavesControlStopped() {
+        // The service starts via bindAndStartAutonomous(): connected=true but
+        // running stays false — the pre-fix trap.
+        val (d, _) = engine(10)
+        d.bindAndStartAutonomous()
+        assertTrue(d.connected)
+        assertFalse(d.controlRunning)
+    }
+
+    @Test fun requireConnectedStartsControlEvenWhenAlreadyConnected() {
+        // Regression: requireConnected() gated on !connected, so every command
+        // after the autonomous bind skipped connect() and running stayed false
+        // (trajectory never advanced; throttle forced to neutral — the crash).
+        val (d, _) = engine(10)
+        d.bindAndStartAutonomous()
+        assertFalse(d.controlRunning)
+        d.requireConnected()
+        assertTrue("command after autonomous bind must start control loops", d.controlRunning)
+    }
+
+    @Test fun requireConnectedAfterDisconnectRestartsControl() {
+        val (d, _) = engine(10)
+        d.bindAndStartAutonomous()
+        d.requireConnected()
+        d.disconnect()
+        assertFalse(d.controlRunning)
+        d.requireConnected()   // reconnect path
+        assertTrue(d.controlRunning)
+    }
+
     // ---- diagnostics hook ----
 
     @Test fun debugLogHookReceivesRxEvents() {

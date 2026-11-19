@@ -145,6 +145,9 @@ class DroneEngine(
     @Volatile
     private var running = false          // control + rx loops
 
+    /** Test-observable control-loop state (running). */
+    internal val controlRunning: Boolean get() = running
+
     @Volatile
     private var hbRunning = false        // heartbeat loop (autonomous)
 
@@ -487,13 +490,18 @@ class DroneEngine(
 
     // -- command handlers (mirror drone_daemon.py handle()) ------------------------------
 
-    /** Mirrors `_req`: connect on demand (with the oracle's 0.2s settle sleep). */
+    /**
+     * Mirrors `_req`: ensure the control/rx loops are running. connect() is
+     * idempotent and always sets running=true — call it UNCONDITIONALLY.
+     * Gating on !connected was a bug: bindAndStartAutonomous() sets
+     * connected=true without running=true, so every command after the
+     * autonomous bind skipped connect() and the 25Hz loop stayed neutral
+     * (no trajectory advance, no sticks — the no-lift/crash class).
+     */
     fun requireConnected() {
         guardKill()
-        if (!connected) {
-            connect()
-            Thread.sleep(200)
-        }
+        connect()
+        Thread.sleep(200)
     }
 
     fun cmdConnect(): Map<String, Any?> {
