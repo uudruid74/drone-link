@@ -42,34 +42,12 @@ internal class IjkBridgeImpl : IjkBridge {
 
     override fun setOptions() {
         with(player) {
-            // Mirror the vendor RC FPV app's ijk options (from its decompiled
-            // SocketClient/Application) so we negotiate the same stream.
+            // Minimal option set (A/B vs option-dump builds): mediacodec=0,
+            // UDP transport, readtimeout. The vendor option parity set was
+            // added in 0.4.3; isolate whether those break prepare.
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec", 0L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "readtimeout", 5000000L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "preferred-image-type", 0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "image-quality-min", 2L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "image-quality-max", 20L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "preferred-video-type", 2L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-need-transcoding", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mjpeg-pix-fmt", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-quality-min", 2L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-quality-max", 20L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-option-preset", 0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-option-tune", 5L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-option-profile", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-params", "crf=23")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "auto-drop-record-frame", 3L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "err_detect", "explode")
-            // Vendor ijk default is TCP interleaved (they never set
-            // rtsp_transport). With the process pinned to the drone net, the
-            // control+interleaved video ride one TCP socket through the
-            // secondary network. UDP was a guess from the E88 reference and
-            // delivered data but never completed prepare.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "tcp")
-            // Probe windows: this camera's stream is MJPEG-over-RTP with
-            // nonstandard timing; the defaults can leave prepareAsync hanging.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", 5000000L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize", 33554432L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "udp")
         }
     }
 

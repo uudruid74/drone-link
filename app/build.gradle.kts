@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 21
-        versionName = "0.4.4"  // RTSP transport TCP (vendor default) — UDP never prepared
+        versionCode = 22
+        versionName = "0.4.5"  // A/B: minimal options (isolate vendor parity break)
     }
 
     buildTypes {
