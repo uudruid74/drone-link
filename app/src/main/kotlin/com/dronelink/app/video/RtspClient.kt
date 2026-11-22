@@ -60,9 +60,12 @@ internal class IjkBridgeImpl : IjkBridge {
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-params", "crf=23")
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "auto-drop-record-frame", 3L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "err_detect", "explode")
-            // The drone's RTSP server only speaks UDP transport (the FFmpeg
-            // reference `-rtsp_transport udp` path; TCP times out).
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "udp")
+            // Vendor ijk default is TCP interleaved (they never set
+            // rtsp_transport). With the process pinned to the drone net, the
+            // control+interleaved video ride one TCP socket through the
+            // secondary network. UDP was a guess from the E88 reference and
+            // delivered data but never completed prepare.
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "tcp")
             // Probe windows: this camera's stream is MJPEG-over-RTP with
             // nonstandard timing; the defaults can leave prepareAsync hanging.
             setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", 5000000L)
