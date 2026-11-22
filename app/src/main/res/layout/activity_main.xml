@@ -5,14 +5,6 @@
     android:orientation="vertical"
     android:padding="24dp">
 
-    <!-- 1x1 hidden surface for the ijkplayer video decoder (live FPV
-         capture host). Render target only; never user-visible. -->
-    <TextureView
-        android:id="@+id/video_texture"
-        android:layout_width="1dp"
-        android:layout_height="1dp"
-        android:visibility="invisible" />
-
     <EditText
         android:id="@+id/et_ssid"
         android:layout_width="match_parent"

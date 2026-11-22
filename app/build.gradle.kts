@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 22
-        versionName = "0.4.5"  // A/B: minimal options (isolate vendor parity break)
+        versionCode = 23
+        versionName = "0.5.0"  // kill ijk — restore vendor-template RTSP/RTP path on secondary net
     }
 
     buildTypes {

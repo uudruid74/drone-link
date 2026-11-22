@@ -15,10 +15,13 @@ import android.os.IBinder
 import com.dronelink.app.debug.DebugLog
 import com.dronelink.app.drone.DroneEngine
 import com.dronelink.app.drone.DroneNetworkTransport
+import com.dronelink.app.drone.ScopedSockets
 import com.dronelink.app.drone.TelemetryProbe
 import com.dronelink.app.mcp.McpServer
 import com.dronelink.app.video.MjpegHttpServer
 import com.dronelink.app.video.RtspClient
+import com.dronelink.app.video.TcpSocketProvider
+import com.dronelink.app.video.UdpSocketProvider
 
 /**
  * Phase 1: joins the drone WiFi as a LOCAL-ONLY secondary network via
@@ -143,16 +146,19 @@ class DroneLinkService : Service() {
                     DebugLog.log("service", "telemetry probe failed: ${e.message}")
                 }
                 // RTSP → MJPEG proxy: FPV for the laptop over tailnet + snapshots.
-                // Decode is handled on-device by ijkplayer (vendor-proven
-                // stack); frames are captured from the hidden TextureView and
-                // re-encoded as JPEG for the HTTP proxy.
+                // Custom RTSP handshake + RTP receiver bound to the drone's
+                // secondary network; vendor JPEG header templates reassemble
+                // the MJPEG stream (ijk removed 2026-11-22 — it never
+                // completed prepare on the secondary network).
                 try {
-                    // RTSP must ride the drone's app-scoped secondary network —
-                    // ijk's sockets follow the process-default network, so pin
-                    // the process to the drone network for the play session.
+                    val cm = connectivityManager
                     val proxy = RtspClient(
-                        connectivityManager = connectivityManager,
-                        droneNetwork = network,
+                        tcp = TcpSocketProvider { addr, timeoutMs ->
+                            ScopedSockets.newTcpSocket(cm, network, addr, timeoutMs).socket
+                        },
+                        udp = UdpSocketProvider {
+                            ScopedSockets.newDatagramSocket(cm, network).socket
+                        },
                     )
                     proxy.start()
                     proxyClient = proxy
