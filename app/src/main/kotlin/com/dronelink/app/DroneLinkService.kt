@@ -372,10 +372,11 @@ class DroneLinkService : Service() {
         }
 
         /**
-         * Bridges one UDP media port: scoped drone-net socket on [port] <-> 
-         * loopback (127.0.0.1:[port]) for the ffmpeg child. The drone sends
-         * RTP to the negotiated client_port on the phone's drone-net address;
-         * ffmpeg listens on loopback, so the relay shuttles datagrams.
+         * Bridges one UDP media port: scoped drone-net socket on [port] -> 
+         * ffmpeg's loopback listener on 127.0.0.1:[port]. The drone sends RTP
+         * to the negotiated client_port on the phone's drone-net address;
+         * ffmpeg listens on loopback. We must NOT bind a loopback socket on
+         * the same port — ffmpeg already owns it (SO_REUSEADDR stealing).
          */
         private inner class UdpRelay(
             private val cm: ConnectivityManager,
@@ -383,7 +384,6 @@ class DroneLinkService : Service() {
             val port: Int,
         ) {
             private var scoped: DatagramSocket? = null
-            private var loop: DatagramSocket? = null
             @Volatile private var stopped = false
             private val threads = mutableListOf<Thread>()
 
@@ -392,42 +392,24 @@ class DroneLinkService : Service() {
                     it.reuseAddress = true
                     it.bind(InetSocketAddress("0.0.0.0", port))
                 }
-                loop = DatagramSocket(null).also {
-                    it.reuseAddress = true
-                    it.bind(InetSocketAddress("127.0.0.1", port))
-                }
                 val s = scoped!!
-                val l = loop!!
                 val a = Thread {
                     val pkt = DatagramPacket(ByteArray(65536), 65536)
                     while (!stopped) {
                         try {
                             s.receive(pkt)
-                            l.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("127.0.0.1", port)))
-                        } catch (_: Exception) {
-                            break
-                        }
-                    }
-                }.apply { isDaemon = true; start() }
-                val b = Thread {
-                    val pkt = DatagramPacket(ByteArray(65536), 65536)
-                    while (!stopped) {
-                        try {
-                            l.receive(pkt)
-                            s.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("192.168.1.1", port)))
+                            s.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("127.0.0.1", port)))
                         } catch (_: Exception) {
                             break
                         }
                     }
                 }.apply { isDaemon = true; start() }
                 threads += a
-                threads += b
             }
 
             fun stop() {
                 stopped = true
                 runCatching { scoped?.close() }
-                runCatching { loop?.close() }
                 threads.forEach { runCatching { it.interrupt() } }
             }
         }
