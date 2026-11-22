@@ -100,6 +100,7 @@ class DroneLinkService : Service() {
         engine = e
         val s = McpServer(e, onEmergencyLand = ::onEmergencyLand, onDisconnect = ::onDisconnect)
         s.ffmpegProbe = ::runFfmpegProbe
+        s.batteryProvider = { com.dronelink.app.drone.BatteryStatus.summary() }
         try {
             s.start()
             mcp = s

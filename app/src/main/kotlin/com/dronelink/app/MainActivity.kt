@@ -30,6 +30,7 @@ import java.util.Base64
 class MainActivity : AppCompatActivity() {
 
     private lateinit var etSsid: EditText
+    private lateinit var tvBattery: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvNetwork: TextView
     private lateinit var tvDebug: TextView
@@ -37,6 +38,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imgSnapshot: ImageView
     private lateinit var btnJoin: Button
     private lateinit var btnStop: Button
+
+    /** Auto-refresh ticker: keeps battery + debug log live without a button. */
+    private val uiTicker = object : Runnable {
+        override fun run() {
+            refresh()
+            uiHandler.postDelayed(this, 750)
+        }
+    }
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
@@ -46,6 +56,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         etSsid = findViewById(R.id.et_ssid)
+        tvBattery = findViewById(R.id.tv_battery)
         tvStatus = findViewById(R.id.tv_status)
         tvNetwork = findViewById(R.id.tv_network)
         tvDebug = findViewById(R.id.tv_debug)
@@ -90,11 +101,25 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        uiHandler.removeCallbacks(uiTicker)
+        uiHandler.postDelayed(uiTicker, 750)
+    }
+
+    override fun onPause() {
+        uiHandler.removeCallbacks(uiTicker)
+        super.onPause()
     }
 
     // ------------------------------------------------------------------ status
 
     private fun refresh() {
+        // Battery telemetry (decoded from drone UDP status packets).
+        val batt = com.dronelink.app.drone.BatteryStatus
+        tvBattery.text = when {
+            batt.levelRaw == null -> "Battery: — (no status packet yet)"
+            batt.ageSeconds > 30 -> "Battery: ${batt.levelRaw} (stale ${batt.ageSeconds}s)"
+            else -> "Battery: ${batt.levelRaw} (marker ${batt.marker}, ${batt.ageSeconds}s old)"
+        }
         tvStatus.text = when (JoinStatus.state) {
             JoinState.IDLE -> "Idle. Enter SSID and tap Join."
             JoinState.REQUESTING -> "Requesting join: ${JoinStatus.detail}"

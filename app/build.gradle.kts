@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 24
-        versionName = "0.5.1"  // dynamic wire header + debug_frame + ffmpeg_probe (on-device stock ffmpeg)
+        versionCode = 26
+        versionName = "0.6.0"  // battery telemetry: UI + MCP tool + decode
     }
 
     buildTypes {

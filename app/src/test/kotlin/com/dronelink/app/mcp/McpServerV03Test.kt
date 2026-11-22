@@ -84,7 +84,7 @@ class McpServerV03Test {
         for (i in 0 until tools.length()) names += tools.getJSONObject(i).getString("name")
         assertTrue(names.contains("fly_home"))
         assertTrue(names.contains("snapshot"))
-        assertEquals(21, tools.length())
+        assertEquals(22, tools.length())
     }
 
     @Test fun flyHomeToolRuns() {

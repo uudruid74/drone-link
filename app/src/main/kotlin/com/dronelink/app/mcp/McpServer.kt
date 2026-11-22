@@ -75,6 +75,10 @@ class McpServer(
     @Volatile
     var ffmpegProbe: (() -> Map<String, Any?>)? = null
 
+    /** Returns the decoded battery status. Set by the service. */
+    @Volatile
+    var batteryProvider: (() -> Map<String, Any?>)? = null
+
     data class ToolSpec(val name: String, val description: String, val schema: JSONObject)
 
     companion object {
@@ -233,6 +237,11 @@ class McpServer(
         ToolSpec(
             "debug_frame",
             "Return the first complete JPEG frame assembled this session as base64 (wire ground truth for offline ffmpeg verification).",
+            obj("type" to "object", "properties" to JSONObject()),
+        ),
+        ToolSpec(
+            "battery",
+            "Return the drone's battery telemetry as decoded from its UDP status packets (raw vendor value + marker + age).",
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
@@ -478,6 +487,11 @@ class McpServer(
                         "size" to f.size,
                         "jpeg_base64" to Base64.getEncoder().encodeToString(f),
                     )
+                }
+                "battery" -> {
+                    val provider = batteryProvider
+                        ?: return errorResponse(id, -32000, "battery provider unavailable (service not set it)").toString()
+                    provider()
                 }
                 "ffmpeg_probe" -> {
                     val runner = ffmpegProbe

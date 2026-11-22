@@ -387,9 +387,19 @@ class DroneEngine(
             val b0 = data[0].toInt() and 0xFF
             variant = if (b0 !in DroneProtocol.GL_IDS) 10 else b0
         }
-        // photo/video notifications -> ack so the app-equivalent stays in sync
-        if (data.size > 4 && (data[2].toInt() and 0xFF) in intArrayOf(0x4D, 0x58)) {
-            raw(byteArrayOf(9, if ((data[2].toInt() and 0xFF) == 0x4D) 1 else 2))
+        // photo/video notifications (and battery status) -> ack so the
+        // app-equivalent stays in sync. Vendor decode (classes3.dex
+        // DeviceBLFragment$4.onReceiver): data[2] marker 'M'/0x4D carries
+        // the battery byte at data[3]; 'X'/0x58 at data[4]. Store it.
+        if (data.size > 4) {
+            val marker = data[2].toInt() and 0xFF
+            if (marker == 0x4D) {
+                BatteryStatus.update('M', data[3].toInt() and 0xFF, lastTelemetry ?: "")
+                raw(byteArrayOf(9, 1))
+            } else if (marker == 0x58) {
+                BatteryStatus.update('X', data[4].toInt() and 0xFF, lastTelemetry ?: "")
+                raw(byteArrayOf(9, 2))
+            }
         }
     }
 
