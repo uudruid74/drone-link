@@ -80,6 +80,12 @@ class RtspClient(
     @Volatile
     private var _latestFrame: ByteArray? = null
 
+    /** First complete JPEG assembled this session (raw bytes) — ground truth
+     * for offline verification with stock ffmpeg. */
+    @Volatile
+    var firstFrameDump: ByteArray? = null
+        private set
+
     private val lock = Object()
 
     private var sock: Socket? = null
@@ -180,6 +186,7 @@ class RtspClient(
         // headers interleave with data and corrupt naively-concatenated
         // frames).
         val reassembler = Rfc2435Reassembler { frame ->
+            if (firstFrameDump == null) firstFrameDump = frame
             synchronized(lock) {
                 _latestFrame = frame
                 _frameVersion++

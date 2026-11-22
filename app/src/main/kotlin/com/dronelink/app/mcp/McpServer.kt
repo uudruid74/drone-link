@@ -64,6 +64,12 @@ class McpServer(
     @Volatile
     var videoPort: Int = 8080
 
+    /** First complete JPEG frame assembled (raw bytes) — for offline
+     * verification against stock ffmpeg. Set by the service from
+     * RtspClient.firstFrameDump. */
+    @Volatile
+    var videoFirstFrame: ByteArray? = null
+
     data class ToolSpec(val name: String, val description: String, val schema: JSONObject)
 
     companion object {
@@ -217,6 +223,11 @@ class McpServer(
         ToolSpec(
             "debug_log",
             "Return the app's DebugLog ring (transport/probe/rtsp lines) as stamped text.",
+            obj("type" to "object", "properties" to JSONObject()),
+        ),
+        ToolSpec(
+            "debug_frame",
+            "Return the first complete JPEG frame assembled this session as base64 (wire ground truth for offline ffmpeg verification).",
             obj("type" to "object", "properties" to JSONObject()),
         ),
     )
@@ -449,6 +460,15 @@ class McpServer(
                     "ok" to true,
                     "log" to com.dronelink.app.debug.DebugLog.exportText(),
                 )
+                "debug_frame" -> {
+                    val f = videoFirstFrame
+                        ?: return errorResponse(id, -32000, "no frame captured yet").toString()
+                    linkedMapOf(
+                        "ok" to true,
+                        "size" to f.size,
+                        "jpeg_base64" to Base64.getEncoder().encodeToString(f),
+                    )
+                }
                 else -> return errorResponse(id, -32602, "Unknown tool: $name").toString()
             }
             success(id, JSONObject()

@@ -45,6 +45,13 @@ class Rfc2435Reassembler(
     private var written = 0
     private var header: ByteArray? = null
     private var sawStart = false
+    private var inBandQt: ByteArray? = null
+    private var lastDri = 0
+
+    /** Written once per session: first complete JPEG assembled (raw, hex). */
+    @Volatile
+    var firstFrameDump: ByteArray? = null
+        private set
 
     /**
      * [payload] must be the RTP payload AFTER the 12-byte RTP header
@@ -68,6 +75,8 @@ class Rfc2435Reassembler(
         // the entropy stream.
         if ((type and 0x40) != 0) {
             if (payload.size - pos < 4) return
+            lastDri = ((payload[pos].toInt() and 0xFF) shl 8) or
+                (payload[pos + 1].toInt() and 0xFF)
             pos += 4
         }
 
@@ -77,6 +86,9 @@ class Rfc2435Reassembler(
             written = 0
             header = null
             sawStart = true
+
+            val wBlocks = payload[6].toInt() and 0xFF
+            val hBlocks = payload[7].toInt() and 0xFF
 
             var firstLuma = -1
             when {
@@ -94,6 +106,9 @@ class Rfc2435Reassembler(
                     }
                     if (qlen % 64 != 0 || qlen > 256 || payload.size - pos < qlen) return
                     firstLuma = payload[pos].toInt() and 0xFF
+                    if (qlen == 128) {
+                        inBandQt = payload.copyOfRange(pos, pos + qlen)
+                    }
                     pos += qlen
                 }
                 q in 1..99 -> {
@@ -103,7 +118,11 @@ class Rfc2435Reassembler(
                 else -> return // q == 0 or q > 99 is reserved/invalid
             }
 
-            val hdr = pickVendorHeader(q, firstLuma) ?: return
+            val hdr = if (inBandQt != null) {
+                buildDynamicHeader(wBlocks, hBlocks, lastDri, inBandQt!!)
+            } else {
+                pickVendorHeader(q, firstLuma)
+            } ?: return
             header = hdr
         } else if (!sawStart) {
             // No start packet seen: can't build headers — discard the frame.
@@ -127,6 +146,7 @@ class Rfc2435Reassembler(
             if (frame.size < 2 || frame[frame.size - 2] != 0xFF.toByte() || frame[frame.size - 1] != 0xD9.toByte()) {
                 frame = frame + byteArrayOf(0xFF.toByte(), 0xD9.toByte())
             }
+            if (firstFrameDump == null) firstFrameDump = frame
             frames++
             onFrame(frame)
             frameBuf = ByteArray(0)
@@ -432,5 +452,63 @@ class Rfc2435Reassembler(
             0xe5.toByte(), 0xe6.toByte(), 0xe7.toByte(), 0xe8.toByte(), 0xe9.toByte(), 0xea.toByte(), 0xf2.toByte(), 0xf3.toByte(), 0xf4.toByte(), 0xf5.toByte(), 0xf6.toByte(), 0xf7.toByte(), 0xf8.toByte(), 0xf9.toByte(), 0xfa.toByte(), 0xff.toByte(),
             0xda.toByte(), 0x00.toByte(), 0x0c.toByte(), 0x03.toByte(), 0x01.toByte(), 0x00.toByte(), 0x02.toByte(), 0x11.toByte(), 0x03.toByte(), 0x11.toByte(), 0x00.toByte(), 0x3f.toByte(), 0x00.toByte(),
         )
+
+        /**
+         * Synthesize the JPEG interchange header from the wire fields — the
+         * camera's in-band quantization tables (never the fixed templates),
+         * the RTP width/height (640x352, NOT the templates' 360), the restart
+         * interval DRI=40, and the vendor's Huffman tables (identical across
+         * all templates). This is what FFmpeg's jpeg_create_header does for
+         * RFC 2435; the fixed templates were chosen by Q and hardcoded
+         * 640x360 + no DRI, which mismatches the actual entropy.
+         */
+        private fun buildDynamicHeader(wBlocks: Int, hBlocks: Int, dri: Int, qt: ByteArray): ByteArray? {
+            if (qt.size != 128) return null
+            val out = java.io.ByteArrayOutputStream()
+            // SOI
+            out.write(byteArrayOf(0xFF.toByte(), 0xD8.toByte()))
+            // DRI (restart interval) — the stream carries restart markers
+            // every DRI MCUs; the fixed templates omitted DRI entirely.
+            if (dri > 0) {
+                out.write(byteArrayOf(0xFF.toByte(), 0xDD.toByte(), 0x00, 0x04))
+                out.write((dri shr 8) and 0xFF)
+                out.write(dri and 0xFF)
+            }
+            // DQT x2 — in-band tables (luma + chroma)
+            out.write(byteArrayOf(0xFF.toByte(), 0xDB.toByte(), 0x00, 0x43, 0x00))
+            out.write(qt, 0, 64)
+            out.write(byteArrayOf(0xFF.toByte(), 0xDB.toByte(), 0x00, 0x43, 0x01))
+            out.write(qt, 64, 64)
+            // DHT x4 — vendor tables (same across all templates)
+            for (seg in VENDOR_DHT_SEGMENTS) out.write(seg)
+            // SOF0 — 4:4:4, wire dimensions (h*8, w*8)
+            val h = hBlocks * 8
+            val w = wBlocks * 8
+            out.write(byteArrayOf(0xFF.toByte(), 0xC0.toByte(), 0x00, 0x11, 0x08))
+            out.write((h shr 8) and 0xFF)
+            out.write(h and 0xFF)
+            out.write((w shr 8) and 0xFF)
+            out.write(w and 0xFF)
+            out.write(byteArrayOf(0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01))
+            // SOS
+            out.write(byteArrayOf(0xFF.toByte(), 0xDA.toByte(), 0x00, 0x0C, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3F, 0x00))
+            return out.toByteArray()
+        }
+
+        /** Extract the four DHT segments from a vendor template (same across Q levels). */
+        private val VENDOR_DHT_SEGMENTS: List<ByteArray> by lazy {
+            val src = VENDOR_Q75_HEADER
+            val segs = mutableListOf<ByteArray>()
+            var i = 2 // skip SOI
+            while (i + 4 <= src.size) {
+                if ((src[i].toInt() and 0xFF) != 0xFF) { i++; continue }
+                val marker = src[i + 1].toInt() and 0xFF
+                if (marker == 0xD9 || marker == 0xDA) break
+                val len = ((src[i + 2].toInt() and 0xFF) shl 8) or (src[i + 3].toInt() and 0xFF)
+                if (marker == 0xC4) segs += src.copyOfRange(i, i + 2 + len)
+                i += 2 + len
+            }
+            segs
+        }
     }
 }

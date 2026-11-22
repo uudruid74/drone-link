@@ -65,15 +65,16 @@ class Rfc2435ReassemblerTest {
         val emitted = mutableListOf<ByteArray>()
         val r = Rfc2435Reassembler { emitted += it }
 
-        // First luma quantizer 0x09 => closest vendor template is Q75.
-        val tables = ByteArray(128) { if (it == 0) 0x09 else ((it % 250) + 1).toByte() }
+        // Real wire shape: type=0x41, q=255, in-band QT (luma first 0x08),
+        // DRI=40, width=80 (640px), height=44 (352px).
+        val tables = ByteArray(128) { if (it == 0) 0x08 else ((it % 250) + 1).toByte() }
         val frag0 = scan(40)
         val frag1 = scan(50)
         val frag2 = scan(30)
 
-        r.feed(payload(0, frag0, tables = tables), marker = false)
-        r.feed(payload(40, frag1), marker = false)
-        r.feed(payload(90, frag2), marker = true)
+        r.feed(payload(0, frag0, q = 0xFF, height = 44, tables = tables), marker = false)
+        r.feed(payload(40, frag1, q = 0xFF, height = 44), marker = false)
+        r.feed(payload(90, frag2, q = 0xFF, height = 44), marker = true)
 
         assertEquals(1, emitted.size)
         assertEquals(1, r.frames)
@@ -83,19 +84,22 @@ class Rfc2435ReassemblerTest {
         assertTrue("frame starts with SOI",
             frame[0] == 0xFF.toByte() && frame[1] == 0xD8.toByte())
 
-        // Header is the vendor's 640x360 Q75 template verbatim.
-        val header = frame.copyOfRange(0, 605)
-        assertTrue("vendor Q75 header verbatim", header.contentEquals(Rfc2435Reassembler.VENDOR_Q75_HEADER))
+        // Dynamic header: DRI present = 40 (wire restart interval).
+        val driIdx = indexOfSegment(frame, 0xDD)
+        assertTrue("DRI present", driIdx >= 0)
+        assertEquals(40,
+            ((frame[driIdx + 4].toInt() and 0xFF) shl 8) or (frame[driIdx + 5].toInt() and 0xFF))
 
-        // No APP0/JFIF, no DRI (vendor header has neither).
-        val jfif = frame.indexOfList("JFIF\u0000".toByteArray(Charsets.ISO_8859_1))
-        assertEquals(-1, jfif)
-        assertEquals(-1, indexOfSegment(frame, 0xDD))
-
-        // SOF0: 640x360, 3 components, 4:4:4 sampling.
+        // DQT x2 use the in-band tables verbatim.
+        val dqtIdx = indexOfSegment(frame, 0xDB)
+        assertTrue("DQT present", dqtIdx >= 0)
+        assertTrue("luma table verbatim",
+            frame.copyOfRange(dqtIdx + 5, dqtIdx + 5 + 64).contentEquals(tables.copyOfRange(0, 64)))
+        assertTrue("chroma table verbatim",
+            frame.copyOfRange(dqtIdx + 74, dqtIdx + 74 + 64).contentEquals(tables.copyOfRange(64, 128)))
         val sofIdx = indexOfSegment(frame, 0xC0)
         assertTrue("SOF0 present", sofIdx >= 0)
-        assertEquals(360, ((frame[sofIdx + 5].toInt() and 0xFF) shl 8) or (frame[sofIdx + 6].toInt() and 0xFF))
+        assertEquals(352, ((frame[sofIdx + 5].toInt() and 0xFF) shl 8) or (frame[sofIdx + 6].toInt() and 0xFF))
         assertEquals(640, ((frame[sofIdx + 7].toInt() and 0xFF) shl 8) or (frame[sofIdx + 8].toInt() and 0xFF))
         assertEquals(3, frame[sofIdx + 9].toInt() and 0xFF)
         assertEquals(0x11, frame[sofIdx + 11].toInt() and 0xFF) // Y sampling 1x1 (4:4:4)
@@ -226,8 +230,12 @@ class Rfc2435ReassemblerTest {
                 frame[i] == leak[0] && frame[i + 1] == leak[1] &&
                     frame[i + 2] == leak[2] && frame[i + 3] == leak[3])
         }
-        // Vendor header carries no DRI at all.
-        assertEquals(-1, indexOfSegment(frame, 0xDD))
+        // Dynamic header now carries the wire's DRI=40 (the fix); the scan
+        // region must still be the clean concatenation.
+        val driIdx = indexOfSegment(frame, 0xDD)
+        assertTrue("DRI present", driIdx >= 0)
+        assertEquals(40,
+            ((frame[driIdx + 4].toInt() and 0xFF) shl 8) or (frame[driIdx + 5].toInt() and 0xFF))
         // Scan = clean concatenation of the fragments.
         val scan = frame.copyOfRange(scanStart, scanEnd)
         val expected = frag0 + frag1 + frag2

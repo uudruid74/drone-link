@@ -189,9 +189,10 @@ class RtspProxyIntegrationTest {
 
     private fun assertValidJpegFrame(frame: ByteArray, scan: ByteArray) {
         assertTrue("frame starts with SOI", frame[0] == 0xFF.toByte() && frame[1] == 0xD8.toByte())
-        // Vendor header style: no JFIF APP0, no DRI.
+        // Dynamic wire-faithful header: no JFIF APP0, but DRI present (wire
+        // restart interval 40).
         assertTrue("no JFIF APP0", !frame.containsSequence("JFIF\u0000".toByteArray(Charsets.ISO_8859_1)))
-        assertTrue("no DRI segment", !frame.containsSequence(byteArrayOf(0xFF.toByte(), 0xDD.toByte())))
+        assertTrue("DRI segment present", frame.containsSequence(byteArrayOf(0xFF.toByte(), 0xDD.toByte())))
         assertTrue("DQT segment present", frame.containsSequence(byteArrayOf(0xFF.toByte(), 0xDB.toByte())))
         assertTrue("DHT segment present", frame.containsSequence(byteArrayOf(0xFF.toByte(), 0xC4.toByte())))
         assertTrue("SOF0 present", frame.containsSequence(byteArrayOf(0xFF.toByte(), 0xC0.toByte())))

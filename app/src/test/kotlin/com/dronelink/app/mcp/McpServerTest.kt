@@ -84,11 +84,11 @@ class McpServerTest {
                 "connect", "disconnect", "takeoff", "land", "emergency_land",
                 "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "raw_udp_send", "udp_probe_send", "headless",
                 "calibrate", "set_gear", "status", "video_url", "snapshot",
-                "debug_log",
+                "debug_log", "debug_frame",
             ),
             names,
         )
-        assertEquals(19, tools.length())
+        assertEquals(20, tools.length())
     }
 
     @Test fun flySchemaVerbatim() {
