@@ -58,10 +58,10 @@ internal class IjkBridgeImpl : IjkBridge {
             // The drone's RTSP server only speaks UDP transport (the FFmpeg
             // reference `-rtsp_transport udp` path; TCP times out).
             setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "udp")
-            // The drone resets the control socket ~100ms after PLAY. Auto-
-            // reconnect keeps the pipeline alive across the reset.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "reconnect", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "reconnect_delay_max", 2000L)
+            // Probe windows: this camera's stream is MJPEG-over-RTP with
+            // nonstandard timing; the defaults can leave prepareAsync hanging.
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", 5000000L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize", 33554432L)
         }
     }
 
