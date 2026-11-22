@@ -20,6 +20,7 @@ import com.dronelink.app.drone.TelemetryProbe
 import com.dronelink.app.mcp.McpServer
 import com.dronelink.app.video.MjpegHttpServer
 import com.dronelink.app.video.RtspClient
+import com.dronelink.app.video.RtspRewrite
 import com.dronelink.app.video.TcpSocketProvider
 import com.dronelink.app.video.UdpSocketProvider
 import java.io.File
@@ -329,55 +330,49 @@ class DroneLinkService : Service() {
                     continue
                 }
                 val d = drone
-                // Upstream: ffmpeg -> drone. Buffer each complete request; if a
+                // Upstream: ffmpeg -> drone. Buffer and forward every complete
+                // RTSP request (OPTIONS -> DESCRIBE -> SETUP -> PLAY). When a
                 // SETUP negotiates client_port=N-M, allocate a fresh relay port
                 // pair (R, R+1) on the drone-net address, rewrite the request to
                 // use R-(R+1), and relay R->N / R+1->N+1. This avoids colliding
                 // with ffmpeg's own sockets (it binds N before SETUP), which
                 // previously caused a swallowed EADDRINUSE + early close = the
-                // drone's silent non-response to SETUP.
+                // drone's silent non-response to SETUP. NOTE: streaming is never
+                // switched on — every request is framed to \r\n\r\n and routed
+                // through RtspRewrite (after PLAY there are no further upstream
+                // RTSP messages, so framing costs nothing).
                 val up = Thread {
                     try {
                         val buf = ByteArray(8192)
                         val cap = StringBuilder()
                         val pending = java.io.ByteArrayOutputStream()
-                        var streaming = false
                         while (true) {
                             val n = client.inputStream.read(buf)
                             if (n < 0) break
-                            if (streaming) {
-                                d.outputStream.write(buf, 0, n)
-                                d.outputStream.flush()
-                                val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
-                                if (cap.length < 16000) {
-                                    cap.append(chunk)
-                                    if (cap.length > 16000) cap.setLength(16000)
-                                }
-                                upstreamCapture = cap.toString()
-                                continue
-                            }
                             pending.write(buf, 0, n)
-                            val raw = pending.toString(Charsets.ISO_8859_1)
+                            val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
                             if (cap.length < 16000) {
-                                cap.append(raw)
+                                cap.append(chunk)
                                 if (cap.length > 16000) cap.setLength(16000)
                             }
                             upstreamCapture = cap.toString()
-                            val headEnd = raw.indexOf("\r\n\r\n")
-                            if (headEnd >= 0) {
+                            // Forward every complete request; keep any partial tail.
+                            var raw = pending.toString(Charsets.ISO_8859_1)
+                            var headEnd = raw.indexOf("\r\n\r\n")
+                            while (headEnd >= 0) {
                                 val req = raw.substring(0, headEnd + 4)
-                                val m = Regex("client_port=(\\d+)-(\\d+)").find(req)
-                                if (m != null) {
-                                    val oldPort = m.groupValues[1].toInt()
+                                val ports = RtspRewrite.clientPorts(req)
+                                if (ports != null) {
                                     val relay = UdpRelayPair(cm, network)
-                                    if (relay.start(oldPort)) {
-                                        val rewritten = req.replace(
-                                            "client_port=$oldPort-${m.groupValues[2]}",
-                                            "client_port=${relay.portA}-${relay.portB}",
-                                        )
+                                    if (relay.start(ports.first)) {
+                                        val rewritten = RtspRewrite.rewriteClientPort(req, relay.portA)
                                         d.outputStream.write(rewritten.toByteArray(Charsets.ISO_8859_1))
                                         d.outputStream.flush()
-                                        DebugLog.log("forwarder", "SETUP client_port=$oldPort -> ${relay.portA}-${relay.portB}")
+                                        DebugLog.log(
+                                            "forwarder",
+                                            "SETUP client_port=${ports.first}-${ports.second} -> " +
+                                                "${relay.portA}-${relay.portB}",
+                                        )
                                         synchronized(udpRelays) { udpRelays += relay }
                                     } else {
                                         d.outputStream.write(req.toByteArray(Charsets.ISO_8859_1))
@@ -387,20 +382,20 @@ class DroneLinkService : Service() {
                                     d.outputStream.write(req.toByteArray(Charsets.ISO_8859_1))
                                     d.outputStream.flush()
                                 }
-                                val trailing = raw.substring(headEnd + 4)
-                                pending.reset()
-                                streaming = true
-                                if (trailing.isNotEmpty()) {
-                                    d.outputStream.write(trailing.toByteArray(Charsets.ISO_8859_1))
-                                    d.outputStream.flush()
-                                }
+                                raw = raw.substring(headEnd + 4)
+                                headEnd = raw.indexOf("\r\n\r\n")
+                            }
+                            pending.reset()
+                            if (raw.isNotEmpty()) {
+                                pending.write(raw.toByteArray(Charsets.ISO_8859_1))
                             }
                         }
                         if (pending.size() > 0) {
                             d.outputStream.write(pending.toByteArray())
                             d.outputStream.flush()
                         }
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        DebugLog.log("forwarder", "up pump failed: ${e.message}")
                     } finally {
                         runCatching { d.close() }
                         runCatching { client.close() }
