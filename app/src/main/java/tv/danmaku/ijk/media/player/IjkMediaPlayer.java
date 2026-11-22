@@ -923,6 +923,7 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private native void _setOutputVideo(boolean enable);
     private native void _setOutputOriginalVideo(boolean enable);
     private native boolean _setStretchedVrMode(boolean enable, boolean stretch);
+    private native boolean _setVrMode(boolean enable);
     private native void _setRotation180(boolean enable);
     private native void _setTexcoordRect(float l, float t, float r, float b);
     private native void _setVideoFilter(String type, String arg, String arg2, boolean enable);

@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.3.6"  // JNI stub signature fixes (0.3.5 aborted on _prestartInsertVideo)
+        versionCode = 14
+        versionName = "0.3.7"  // add _setVrMode(Z)Z stub (0.3.6 aborted on it)
     }
 
     buildTypes {
