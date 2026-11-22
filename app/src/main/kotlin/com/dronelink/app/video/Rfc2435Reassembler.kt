@@ -6,12 +6,12 @@ package com.dronelink.app.video
  * Every RTP payload for MJPEG over RTP starts with an 8-byte main JPEG header:
  *   Type-specific(1) | Fragment Offset(3, big-endian) | Type(1) |
  *   Q(1) | Width(1) | Height(1)
- * followed — on the first fragment of a frame only (fragment offset 0) — by:
- *   - a 4-byte Restart Marker header when the Type field has bit 0x40 set
- *     (Restart Interval(16, big-endian) | F(1) | L(1) | Restart Count(14)),
- *   - a 4-byte Quantization Table header when Q >= 128
- *     (MBZ | Precision | Length(16, big-endian)), plus `Length` bytes of
- *     quantization table data when Length > 0,
+ * followed — on EVERY fragment when the Type field has bit 0x40 set — by a
+ *   4-byte Restart Marker header (Restart Interval(16, big-endian) |
+ *   F(1) | L(1) | Restart Count(14)), and on the first fragment of a frame
+ *   only (fragment offset 0) — when Q >= 128 — by a 4-byte Quantization
+ *   Table header (MBZ | Precision | Length(16, big-endian)), plus `Length`
+ *   bytes of quantization table data when Length > 0,
  * and then the JPEG payload fragment (entropy-coded scan data).
  *
  * RFC 2435 represents JPEG in abbreviated form: the frame and scan headers
