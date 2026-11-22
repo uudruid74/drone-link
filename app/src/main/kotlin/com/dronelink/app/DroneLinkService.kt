@@ -147,7 +147,13 @@ class DroneLinkService : Service() {
                 // stack); frames are captured from the hidden TextureView and
                 // re-encoded as JPEG for the HTTP proxy.
                 try {
-                    val proxy = RtspClient()
+                    // RTSP must ride the drone's app-scoped secondary network —
+                    // ijk's sockets follow the process-default network, so pin
+                    // the process to the drone network for the play session.
+                    val proxy = RtspClient(
+                        connectivityManager = connectivityManager,
+                        droneNetwork = network,
+                    )
                     proxy.start()
                     proxyClient = proxy
                     val http = MjpegHttpServer(proxy)

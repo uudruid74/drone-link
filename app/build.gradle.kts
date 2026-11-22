@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.3.8"  // full vendor JNI table match (36/36 methods)
+        versionCode = 18
+        versionName = "0.4.1"  // pin RTSP to drone secondary network (process default)
     }
 
     buildTypes {

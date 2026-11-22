@@ -55,6 +55,13 @@ internal class IjkBridgeImpl : IjkBridge {
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-quality-min", 2L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-quality-max", 20L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "err_detect", "explode")
+            // The drone's RTSP server only speaks UDP transport (the FFmpeg
+            // reference `-rtsp_transport udp` path; TCP times out).
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "udp")
+            // The drone resets the control socket ~100ms after PLAY. Auto-
+            // reconnect keeps the pipeline alive across the reset.
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "reconnect", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "reconnect_delay_max", 2000L)
         }
     }
 
@@ -115,6 +122,9 @@ internal class RtspClient(
     private val path: String = "/webcam",
     private val tag: String = "rtsp",
     private val bridge: IjkBridge = IjkBridgeImpl(),
+    /** Drone network the RTSP sockets must ride (app-scoped secondary join). */
+    private val connectivityManager: android.net.ConnectivityManager? = null,
+    private val droneNetwork: android.net.Network? = null,
 ) : VideoFeed {
 
     private val url get() = "rtsp://$host:$rtspPort$path"
@@ -147,6 +157,10 @@ internal class RtspClient(
     @Volatile
     private var _latestFrame: ByteArray? = null
 
+    /** Previous process-default network to restore on stop (null = cellular). */
+    @Volatile
+    private var _prevProcessNetwork: android.net.Network? = null
+
     private val lock = Object()
     private var grabber: Thread? = null
 
@@ -171,6 +185,21 @@ internal class RtspClient(
         if (running) return
         error = null
         try {
+            // ijk's sockets are created inside the native ffmpeg layer, so
+            // they follow the process default network. The drone is a
+            // secondary app-scoped network; pin the process to it for the
+            // whole play session so RTSP/RTTP rides the right route.
+            // (The heartbeat already binds per-socket; ijk cannot.)
+            val prevNet = connectivityManager?.let { cm ->
+                try {
+                    cm.boundNetworkForProcess
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+            if (connectivityManager != null && droneNetwork != null) {
+                connectivityManager.bindProcessToNetwork(droneNetwork)
+            }
             bridge.setOptions()
             bridge.setDataSource(url)
             bridge.onPrepared = {
@@ -188,6 +217,8 @@ internal class RtspClient(
             }
             bridge.prepareAsync()
             grabber = Thread { grabLoop() }.apply { isDaemon = true; start() }
+            // keep the previous binding to restore on stop
+            _prevProcessNetwork = prevNet
         } catch (e: Exception) {
             error = "ijk start failed: ${e.message}"
             DebugLog.log(tag, error!!)
@@ -199,6 +230,11 @@ internal class RtspClient(
         synchronized(lock) {
             running = false
             lock.notifyAll()
+        }
+        // restore the pre-play process-default network (cellular)
+        if (connectivityManager != null) {
+            runCatching { connectivityManager?.bindProcessToNetwork(_prevProcessNetwork) }
+            _prevProcessNetwork = null
         }
         releaseQuiet()
     }
