@@ -28,6 +28,8 @@ class DroneEngineTest {
             canned.copyInto(buf)
             return canned.size
         }
+
+        override fun probeSend(destPort: Int, srcPort: Int, data: ByteArray): List<String> = emptyList()
         override fun close() {}
     }
 

@@ -73,6 +73,12 @@ interface DroneTransport {
     /** Receive into buf; returns bytes received, or -1 on timeout/closed. */
     fun receive(buf: ByteArray): Int
     fun close()
+    /**
+     * Protocol probe: bind a fresh scoped UDP socket on [srcPort], send [data]
+     * to the drone at [destPort], capture replies (up to ~2.5s). Returns hex
+     * reply strings. Used to trial the vendor's video-engine envelopes.
+     */
+    fun probeSend(destPort: Int, srcPort: Int, data: ByteArray): List<String>
 }
 
 /**
@@ -592,6 +598,56 @@ class DroneEngine(
             "status" to status(),
             "verified" to false,
             "reason" to "UDP datagram sent; aircraft confirmation requires rx telemetry",
+        )
+    }
+
+    /**
+     * Send raw bytes over the connected control socket (debug/protocol-probe
+     * only). Used to exercise vendor-side commands (e.g. the bl60xmjpeg
+     * query/settings envelopes) without touching the engine's state machine.
+     */
+    fun rawUdpSend(hex: String): Map<String, Any?> {
+        requireConnected()
+        val clean = hex.replace(" ", "").replace("0x", "")
+        if (clean.isEmpty() || clean.length % 2 != 0) {
+            return linkedMapOf(
+                "ok" to false,
+                "error" to "dataHex must be even-length hex (e.g. \"ef10080001000000\")",
+            )
+        }
+        val bytes = ByteArray(clean.length / 2) { i ->
+            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+        raw(bytes)
+        return linkedMapOf(
+            "ok" to true,
+            "bytes" to bytes.size,
+            "hex" to hex,
+            "status" to status(),
+        )
+    }
+
+    /**
+     * Protocol-probe: bind a UDP socket on [srcPort] (drone-net address), send
+     * [hex] to the drone at [destPort], and capture any replies for up to
+     * ~2.5s. Used to trial the vendor's video-engine envelopes (0x20EF
+     * command format) from the right source port.
+     */
+    fun udpProbeSend(destPort: Int, srcPort: Int, hex: String): Map<String, Any?> {
+        val clean = hex.replace(" ", "").replace("0x", "")
+        if (clean.isEmpty() || clean.length % 2 != 0) {
+            return linkedMapOf("ok" to false, "error" to "dataHex must be even-length hex")
+        }
+        val bytes = ByteArray(clean.length / 2) { i ->
+            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+        val replies = transport.probeSend(destPort, srcPort, bytes)
+        return linkedMapOf(
+            "ok" to true,
+            "src_port" to srcPort,
+            "dest_port" to destPort,
+            "sent_bytes" to bytes.size,
+            "replies" to replies,
         )
     }
 

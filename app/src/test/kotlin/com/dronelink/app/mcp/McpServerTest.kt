@@ -27,6 +27,8 @@ class McpServerTest {
         override fun bind() {}
         override fun send(data: ByteArray) {}
         override fun receive(buf: ByteArray): Int = -1
+
+        override fun probeSend(destPort: Int, srcPort: Int, data: ByteArray): List<String> = emptyList()
         override fun close() {}
     }
 
@@ -80,13 +82,13 @@ class McpServerTest {
         assertEquals(
             listOf(
                 "connect", "disconnect", "takeoff", "land", "emergency_land",
-                "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "headless",
+                "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "raw_udp_send", "udp_probe_send", "headless",
                 "calibrate", "set_gear", "status", "video_url", "snapshot",
                 "debug_log",
             ),
             names,
         )
-        assertEquals(17, tools.length())
+        assertEquals(19, tools.length())
     }
 
     @Test fun flySchemaVerbatim() {

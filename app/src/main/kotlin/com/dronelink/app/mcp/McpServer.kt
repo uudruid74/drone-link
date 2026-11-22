@@ -156,6 +156,27 @@ class McpServer(
             ),
         ),
         ToolSpec(
+            "raw_udp_send",
+            "Send raw hex bytes over the connected control socket (debug/protocol probe only).",
+            obj(
+                "type" to "object",
+                "properties" to JSONObject().put("dataHex", obj("type" to "string")),
+                "required" to required("dataHex"),
+            ),
+        ),
+        ToolSpec(
+            "udp_probe_send",
+            "Bind a UDP socket on srcPort, send hex to the drone at destPort, capture replies (protocol probe).",
+            obj(
+                "type" to "object",
+                "properties" to JSONObject()
+                    .put("destPort", int())
+                    .put("srcPort", int())
+                    .put("dataHex", obj("type" to "string")),
+                "required" to required("destPort", "srcPort", "dataHex"),
+            ),
+        ),
+        ToolSpec(
             "headless",
             "Toggle headless (no-head) mode.",
             obj(
@@ -400,6 +421,12 @@ class McpServer(
                 "trajectory" -> engine.cmdTrajectory(parseWaypoints(args.optJSONArray("waypoints")))
                 "stop_trajectory" -> engine.cmdStopTrajectory()
                 "camera" -> engine.cmdCamera(args.optInt("cam", 1))
+                "raw_udp_send" -> engine.rawUdpSend(args.optString("dataHex", ""))
+                "udp_probe_send" -> engine.udpProbeSend(
+                    args.optInt("destPort", 7099),
+                    args.optInt("srcPort", 8890),
+                    args.optString("dataHex", ""),
+                )
                 "headless" -> engine.cmdHeadless(args.optBoolean("enabled", false))
                 "calibrate" -> engine.cmdCalibrate()
                 "set_gear" -> engine.cmdSetGear(args.optInt("gear", 1))

@@ -77,4 +77,35 @@ class DroneNetworkTransport(
         bindMode = "unbound"
         localAddress = null
     }
+
+    override fun probeSend(destPort: Int, srcPort: Int, data: ByteArray): List<String> {
+        val n = network ?: return emptyList()
+        val cm = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        val local4 = cm?.getLinkProperties(n)?.linkAddresses
+            ?.mapNotNull { it.address }
+            ?.filterIsInstance<java.net.Inet4Address>()
+            ?.firstOrNull()
+            ?: return listOf("error: no IPv4 address on drone network")
+        return try {
+            val s = ScopedSockets.newDatagramSocketUnbound(cm, n).socket
+            s.bind(InetSocketAddress(local4, srcPort))
+            s.soTimeout = 2500
+            s.send(DatagramPacket(data, data.size, InetSocketAddress(DroneProtocol.DRONE_IP, destPort)))
+            val out = mutableListOf<String>()
+            val buf = ByteArray(4096)
+            try {
+                while (true) {
+                    val p = DatagramPacket(buf, buf.size)
+                    s.receive(p)
+                    out += "len=${p.length} ${buf.copyOf(p.length).joinToString(" ") { "%02x".format(it) }.take(400)}"
+                }
+            } catch (e: java.net.SocketTimeoutException) {
+                // expected: reply window closed
+            }
+            s.close()
+            out
+        } catch (e: Exception) {
+            listOf("error: ${e.message}")
+        }
+    }
 }

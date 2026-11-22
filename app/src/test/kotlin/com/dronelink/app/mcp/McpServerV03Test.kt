@@ -23,6 +23,8 @@ class McpServerV03Test {
         override fun bind() {}
         override fun send(data: ByteArray) {}
         override fun receive(buf: ByteArray): Int = -1
+
+        override fun probeSend(destPort: Int, srcPort: Int, data: ByteArray): List<String> = emptyList()
         override fun close() {}
     }
 
@@ -82,7 +84,7 @@ class McpServerV03Test {
         for (i in 0 until tools.length()) names += tools.getJSONObject(i).getString("name")
         assertTrue(names.contains("fly_home"))
         assertTrue(names.contains("snapshot"))
-        assertEquals(17, tools.length())
+        assertEquals(19, tools.length())
     }
 
     @Test fun flyHomeToolRuns() {

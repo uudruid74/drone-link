@@ -17,6 +17,8 @@ class DroneEngineV03Test {
         override fun bind() { bindCalls++ }
         override fun send(data: ByteArray) { sent += data }
         override fun receive(buf: ByteArray): Int = -1
+
+        override fun probeSend(destPort: Int, srcPort: Int, data: ByteArray): List<String> = emptyList()
         override fun close() {}
     }
 
