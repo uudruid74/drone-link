@@ -16,6 +16,7 @@ import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.view.TextureView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -28,6 +29,12 @@ import java.net.URL
 import java.util.Base64
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** The hidden 1x1 TextureView used by the ijk video decoder. */
+        @Volatile
+        var videoTexture: TextureView? = null
+    }
 
     private lateinit var etSsid: EditText
     private lateinit var tvStatus: TextView
@@ -44,7 +51,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
+        videoTexture = findViewById(R.id.video_texture)
         etSsid = findViewById(R.id.et_ssid)
         tvStatus = findViewById(R.id.tv_status)
         tvNetwork = findViewById(R.id.tv_network)
