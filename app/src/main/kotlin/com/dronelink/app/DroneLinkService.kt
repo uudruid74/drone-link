@@ -23,6 +23,8 @@ import com.dronelink.app.video.RtspClient
 import com.dronelink.app.video.TcpSocketProvider
 import com.dronelink.app.video.UdpSocketProvider
 import java.io.File
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -240,7 +242,7 @@ class DroneLinkService : Service() {
             val args = listOf(
                 "-hide_banner", "-loglevel", "info",
                 "-y",
-                "-rtsp_transport", "tcp",
+                "-rtsp_transport", "udp",
                 "-t", "6",
                 "-i", "rtsp://127.0.0.1:$localPort/webcam",
                 "-frames:v", "4",
@@ -281,7 +283,9 @@ class DroneLinkService : Service() {
     /**
      * Loopback TCP relay: accepts local connections (ffmpeg) and bridges them
      * to the drone's RTSP port over a scoped socket bound to the drone
-     * network. Nothing here depends on process-level network binding.
+     * network. Nothing here depends on process-level network binding. Also
+     * sniffs SETUP's client_port and bridges the drone's UDP media ports to
+     * loopback (the drone is UDP-only — TCP interleave is refused with 461).
      */
     private class TcpForwarder(
         private val cm: ConnectivityManager,
@@ -290,6 +294,7 @@ class DroneLinkService : Service() {
         private val server = ServerSocket()
         @Volatile private var running = false
         private val threads = mutableListOf<Thread>()
+        private val udpRelays = mutableListOf<UdpRelay>()
 
         fun start(): Int {
             server.reuseAddress = true
@@ -313,9 +318,33 @@ class DroneLinkService : Service() {
                     continue
                 }
                 val d = drone
+                // Upstream: ffmpeg -> drone. Sniff SETUP for client_port.
                 val up = Thread {
-                    try { client.inputStream.copyTo(d.outputStream) } catch (_: Exception) {}
-                    finally {
+                    try {
+                        val buf = ByteArray(8192)
+                        val sb = StringBuilder()
+                        while (true) {
+                            val n = client.inputStream.read(buf)
+                            if (n < 0) break
+                            d.outputStream.write(buf, 0, n)
+                            d.outputStream.flush()
+                            val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
+                            sb.append(chunk)
+                            if (sb.length > 4096) sb.delete(0, sb.length - 4096)
+                            val m = Regex("client_port=(\\d+)-(\\d+)").find(sb.toString())
+                            if (m != null) {
+                                val port = m.groupValues[1].toInt()
+                                synchronized(udpRelays) {
+                                    if (udpRelays.none { it.port == port }) {
+                                        val relay = UdpRelay(cm, network, port)
+                                        relay.start()
+                                        udpRelays += relay
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                    } finally {
                         runCatching { d.close() }
                         runCatching { client.close() }
                     }
@@ -336,6 +365,71 @@ class DroneLinkService : Service() {
             running = false
             runCatching { server.close() }
             threads.forEach { runCatching { it.interrupt() } }
+            synchronized(udpRelays) {
+                udpRelays.forEach { runCatching { it.stop() } }
+                udpRelays.clear()
+            }
+        }
+
+        /**
+         * Bridges one UDP media port: scoped drone-net socket on [port] <-> 
+         * loopback (127.0.0.1:[port]) for the ffmpeg child. The drone sends
+         * RTP to the negotiated client_port on the phone's drone-net address;
+         * ffmpeg listens on loopback, so the relay shuttles datagrams.
+         */
+        private inner class UdpRelay(
+            private val cm: ConnectivityManager,
+            private val network: Network,
+            val port: Int,
+        ) {
+            private var scoped: DatagramSocket? = null
+            private var loop: DatagramSocket? = null
+            @Volatile private var stopped = false
+            private val threads = mutableListOf<Thread>()
+
+            fun start() {
+                scoped = ScopedSockets.newDatagramSocketUnbound(cm, network).socket.also {
+                    it.reuseAddress = true
+                    it.bind(InetSocketAddress("0.0.0.0", port))
+                }
+                loop = DatagramSocket(null).also {
+                    it.reuseAddress = true
+                    it.bind(InetSocketAddress("127.0.0.1", port))
+                }
+                val s = scoped!!
+                val l = loop!!
+                val a = Thread {
+                    val pkt = DatagramPacket(ByteArray(65536), 65536)
+                    while (!stopped) {
+                        try {
+                            s.receive(pkt)
+                            l.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("127.0.0.1", port)))
+                        } catch (_: Exception) {
+                            break
+                        }
+                    }
+                }.apply { isDaemon = true; start() }
+                val b = Thread {
+                    val pkt = DatagramPacket(ByteArray(65536), 65536)
+                    while (!stopped) {
+                        try {
+                            l.receive(pkt)
+                            s.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("192.168.1.1", port)))
+                        } catch (_: Exception) {
+                            break
+                        }
+                    }
+                }.apply { isDaemon = true; start() }
+                threads += a
+                threads += b
+            }
+
+            fun stop() {
+                stopped = true
+                runCatching { scoped?.close() }
+                runCatching { loop?.close() }
+                threads.forEach { runCatching { it.interrupt() } }
+            }
         }
     }
 
