@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 26
-        versionName = "0.6.0"  // battery telemetry: UI + MCP tool + decode
+        versionCode = 27
+        versionName = "0.6.1"  // forwarder SETUP client_port rewrite (relay port collision fix)
     }
 
     buildTypes {

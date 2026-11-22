@@ -217,10 +217,12 @@ class DroneLinkService : Service() {
      * child process cannot bind to the drone's secondary network (Android
      * process binding doesn't propagate across exec), so ffmpeg talks to a
      * loopback TCP forwarder running inside this (network-bound via scoped
-     * sockets) process, which relays to the drone. Uses RTSP-over-TCP
-     * interleave so all media rides the same relayed connection. Captures N
-     * JPEG frames to filesDir/ffprobe_%02d.jpg and returns them as base64,
-     * plus ffmpeg's stderr tail.
+     * sockets) process, which relays to the drone. The drone's RTSP is
+     * UDP-only (TCP interleave is refused with 461), so media rides UDP: the
+     * forwarder rewrites SETUP's client_port to fresh relay ports and bridges
+     * the drone's UDP media to ffmpeg's loopback sockets. Captures N JPEG
+     * frames to filesDir/ffprobe_%02d.jpg and returns them as base64, plus
+     * ffmpeg's stderr tail.
      */
     private fun runFfmpegProbe(): Map<String, Any?> {
         val network = JoinStatus.joinedNetwork
@@ -297,7 +299,7 @@ class DroneLinkService : Service() {
         private val server = ServerSocket()
         @Volatile private var running = false
         private val threads = mutableListOf<Thread>()
-        private val udpRelays = mutableListOf<UdpRelay>()
+        private val udpRelays = mutableListOf<UdpRelayPair>()
 
         /** Raw RTSP control traffic (both directions) for offline diagnosis. */
         @Volatile
@@ -327,36 +329,76 @@ class DroneLinkService : Service() {
                     continue
                 }
                 val d = drone
-                // Upstream: ffmpeg -> drone. Sniff SETUP for client_port.
+                // Upstream: ffmpeg -> drone. Buffer each complete request; if a
+                // SETUP negotiates client_port=N-M, allocate a fresh relay port
+                // pair (R, R+1) on the drone-net address, rewrite the request to
+                // use R-(R+1), and relay R->N / R+1->N+1. This avoids colliding
+                // with ffmpeg's own sockets (it binds N before SETUP), which
+                // previously caused a swallowed EADDRINUSE + early close = the
+                // drone's silent non-response to SETUP.
                 val up = Thread {
                     try {
                         val buf = ByteArray(8192)
-                        val sb = StringBuilder()
                         val cap = StringBuilder()
+                        val pending = java.io.ByteArrayOutputStream()
+                        var streaming = false
                         while (true) {
                             val n = client.inputStream.read(buf)
                             if (n < 0) break
-                            d.outputStream.write(buf, 0, n)
-                            d.outputStream.flush()
-                            val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
-                            sb.append(chunk)
+                            if (streaming) {
+                                d.outputStream.write(buf, 0, n)
+                                d.outputStream.flush()
+                                val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
+                                if (cap.length < 16000) {
+                                    cap.append(chunk)
+                                    if (cap.length > 16000) cap.setLength(16000)
+                                }
+                                upstreamCapture = cap.toString()
+                                continue
+                            }
+                            pending.write(buf, 0, n)
+                            val raw = pending.toString(Charsets.ISO_8859_1)
                             if (cap.length < 16000) {
-                                cap.append(chunk)
+                                cap.append(raw)
                                 if (cap.length > 16000) cap.setLength(16000)
                             }
                             upstreamCapture = cap.toString()
-                            if (sb.length > 4096) sb.delete(0, sb.length - 4096)
-                            val m = Regex("client_port=(\\d+)-(\\d+)").find(sb.toString())
-                            if (m != null) {
-                                val port = m.groupValues[1].toInt()
-                                synchronized(udpRelays) {
-                                    if (udpRelays.none { it.port == port }) {
-                                        val relay = UdpRelay(cm, network, port)
-                                        relay.start()
-                                        udpRelays += relay
+                            val headEnd = raw.indexOf("\r\n\r\n")
+                            if (headEnd >= 0) {
+                                val req = raw.substring(0, headEnd + 4)
+                                val m = Regex("client_port=(\\d+)-(\\d+)").find(req)
+                                if (m != null) {
+                                    val oldPort = m.groupValues[1].toInt()
+                                    val relay = UdpRelayPair(cm, network)
+                                    if (relay.start(oldPort)) {
+                                        val rewritten = req.replace(
+                                            "client_port=$oldPort-${m.groupValues[2]}",
+                                            "client_port=${relay.portA}-${relay.portB}",
+                                        )
+                                        d.outputStream.write(rewritten.toByteArray(Charsets.ISO_8859_1))
+                                        d.outputStream.flush()
+                                        DebugLog.log("forwarder", "SETUP client_port=$oldPort -> ${relay.portA}-${relay.portB}")
+                                        synchronized(udpRelays) { udpRelays += relay }
+                                    } else {
+                                        d.outputStream.write(req.toByteArray(Charsets.ISO_8859_1))
+                                        d.outputStream.flush()
                                     }
+                                } else {
+                                    d.outputStream.write(req.toByteArray(Charsets.ISO_8859_1))
+                                    d.outputStream.flush()
+                                }
+                                val trailing = raw.substring(headEnd + 4)
+                                pending.reset()
+                                streaming = true
+                                if (trailing.isNotEmpty()) {
+                                    d.outputStream.write(trailing.toByteArray(Charsets.ISO_8859_1))
+                                    d.outputStream.flush()
                                 }
                             }
+                        }
+                        if (pending.size() > 0) {
+                            d.outputStream.write(pending.toByteArray())
+                            d.outputStream.flush()
                         }
                     } catch (_: Exception) {
                     } finally {
@@ -404,44 +446,97 @@ class DroneLinkService : Service() {
         }
 
         /**
-         * Bridges one UDP media port: scoped drone-net socket on [port] -> 
-         * ffmpeg's loopback listener on 127.0.0.1:[port]. The drone sends RTP
-         * to the negotiated client_port on the phone's drone-net address;
-         * ffmpeg listens on loopback. We must NOT bind a loopback socket on
-         * the same port — ffmpeg already owns it (SO_REUSEADDR stealing).
+         * Relays the drone's UDP media to ffmpeg's loopback sockets. Allocates
+         * TWO consecutive free ports (R, R+1) on the drone-net address — the
+         * SETUP request is rewritten to client_port=R-(R+1) so the drone sends
+         * RTP to R and RTCP to R+1, both of which are forwarded to ffmpeg's
+         * real sockets (N, N+1 on 127.0.0.1). ffmpeg already owns N/N+1, so
+         * binding here is a hard collision — never bind N.
          */
-        private inner class UdpRelay(
+        private inner class UdpRelayPair(
             private val cm: ConnectivityManager,
             private val network: Network,
-            val port: Int,
         ) {
-            private var scoped: DatagramSocket? = null
+            var portA: Int = 0
+                private set
+            var portB: Int = 0
+                private set
+            private var sockA: DatagramSocket? = null
+            private var sockB: DatagramSocket? = null
             @Volatile private var stopped = false
             private val threads = mutableListOf<Thread>()
 
-            fun start() {
-                scoped = ScopedSockets.newDatagramSocketUnbound(cm, network).socket.also {
-                    it.reuseAddress = true
-                    it.bind(InetSocketAddress("0.0.0.0", port))
+            /** @param forwardBase ffmpeg's real client_port N (loopback target). */
+            fun start(forwardBase: Int): Boolean {
+                return try {
+                    val local4 = cm?.getLinkProperties(network)?.linkAddresses
+                        ?.mapNotNull { it.address }
+                        ?.filterIsInstance<java.net.Inet4Address>()
+                        ?.firstOrNull()
+                        ?: run {
+                            DebugLog.log("forwarder", "relay: no IPv4 on drone net")
+                            return false
+                        }
+                    // Bind on the drone-net address (never wildcard — a 0.0.0.0
+                    // bind rides the process-default network). Port 0 picks a
+                    // free ephemeral port.
+                    val sa = ScopedSockets.newDatagramSocketUnbound(cm, network).socket
+                    sa.reuseAddress = true
+                    sa.bind(InetSocketAddress(local4, 0))
+                    portA = sa.localPort
+                    sockA = sa
+                    // Try to get the consecutive port for the second socket;
+                    // re-roll portA if the neighbour is taken.
+                    var sb: DatagramSocket? = null
+                    var attempt = 0
+                    while (sb == null && attempt < 5) {
+                        attempt++
+                        val s = ScopedSockets.newDatagramSocketUnbound(cm, network).socket
+                        s.reuseAddress = true
+                        try {
+                            s.bind(InetSocketAddress(local4, portA + 1))
+                            sb = s
+                        } catch (_: Exception) {
+                            runCatching { s.close() }
+                            runCatching { sa.close() }
+                            val sA = ScopedSockets.newDatagramSocketUnbound(cm, network).socket
+                            sA.reuseAddress = true
+                            sA.bind(InetSocketAddress(local4, 0))
+                            portA = sA.localPort
+                            sockA = sA
+                        }
+                    }
+                    val sB = sb ?: run { runCatching { sa.close() }; sockA = null; return false }
+                    portB = sB.localPort
+                    sockB = sB
+                    threads += relayThread(sockA!!, forwardBase)
+                    threads += relayThread(sockB!!, forwardBase + 1)
+                    DebugLog.log("forwarder", "relay ${portA}-${portB} -> 127.0.0.1:$forwardBase-${forwardBase + 1}")
+                    true
+                } catch (e: Exception) {
+                    DebugLog.log("forwarder", "relay start failed: ${e.message}")
+                    stop()
+                    false
                 }
-                val s = scoped!!
-                val a = Thread {
+            }
+
+            private fun relayThread(s: DatagramSocket, targetPort: Int): Thread =
+                Thread {
                     val pkt = DatagramPacket(ByteArray(65536), 65536)
                     while (!stopped) {
                         try {
                             s.receive(pkt)
-                            s.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("127.0.0.1", port)))
+                            s.send(DatagramPacket(pkt.data, pkt.length, InetSocketAddress("127.0.0.1", targetPort)))
                         } catch (_: Exception) {
                             break
                         }
                     }
                 }.apply { isDaemon = true; start() }
-                threads += a
-            }
 
             fun stop() {
                 stopped = true
-                runCatching { scoped?.close() }
+                runCatching { sockA?.close() }
+                runCatching { sockB?.close() }
                 threads.forEach { runCatching { it.interrupt() } }
             }
         }
