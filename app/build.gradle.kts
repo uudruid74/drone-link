@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.3.7"  // add _setVrMode(Z)Z stub (0.3.6 aborted on it)
+        versionCode = 15
+        versionName = "0.3.8"  // full vendor JNI table match (36/36 methods)
     }
 
     buildTypes {
