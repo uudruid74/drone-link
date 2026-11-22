@@ -237,8 +237,7 @@ class DroneLinkService : Service() {
         try {
             val outPrefix = File(filesDir, "ffprobe_").absolutePath
             filesDir.listFiles()?.forEach { if (it.name.startsWith("ffprobe_")) it.delete() }
-            val pb = ProcessBuilder(
-                bin.absolutePath,
+            val args = listOf(
                 "-hide_banner", "-loglevel", "info",
                 "-y",
                 "-rtsp_transport", "udp",
@@ -249,6 +248,12 @@ class DroneLinkService : Service() {
                 "-f", "image2",
                 "$outPrefix%02d.jpg",
             )
+            // SELinux blocks execve of app_data_file binaries from the app
+            // domain; the standard workaround is invoking via the system
+            // linker (which itself is system-executable).
+            val cmd = mutableListOf("/system/bin/linker64", bin.absolutePath)
+            cmd += args
+            val pb = ProcessBuilder(cmd)
             pb.redirectErrorStream(false)
             val p = pb.start()
             val err = p.errorStream.bufferedReader().readText()
