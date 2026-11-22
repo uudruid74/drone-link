@@ -216,9 +216,16 @@ class DroneLinkService : Service() {
     private fun runFfmpegProbe(): Map<String, Any?> {
         val network = JoinStatus.joinedNetwork
             ?: return linkedMapOf("ok" to false, "error" to "not joined to drone network")
-        val bin = "/data/local/tmp/ffmpeg"
-        if (!File(bin).canExecute()) {
-            return linkedMapOf("ok" to false, "error" to "ffmpeg binary missing on device: $bin")
+        val bin = File(filesDir, "ffmpeg")
+        if (!bin.canExecute()) {
+            // First run after install: copy from /data/local/tmp (shell-pushed).
+            val src = File("/data/local/tmp/ffmpeg")
+            if (src.canRead()) {
+                runCatching { src.copyTo(bin, overwrite = true); bin.setExecutable(true, false) }
+            }
+            if (!bin.canExecute()) {
+                return linkedMapOf("ok" to false, "error" to "ffmpeg binary missing in app files dir")
+            }
         }
         var bound = false
         try {
@@ -228,10 +235,10 @@ class DroneLinkService : Service() {
             return linkedMapOf("ok" to false, "error" to "bind: ${e.message}")
         }
         try {
-            val outPrefix = "/data/local/tmp/ffprobe_"
-            File("/data/local/tmp").listFiles()?.forEach { if (it.name.startsWith("ffprobe_")) it.delete() }
+            val outPrefix = File(filesDir, "ffprobe_").absolutePath
+            filesDir.listFiles()?.forEach { if (it.name.startsWith("ffprobe_")) it.delete() }
             val pb = ProcessBuilder(
-                bin,
+                bin.absolutePath,
                 "-hide_banner", "-loglevel", "info",
                 "-y",
                 "-rtsp_transport", "udp",
@@ -247,7 +254,7 @@ class DroneLinkService : Service() {
             val err = p.errorStream.bufferedReader().readText()
             val ok = p.waitFor(30, TimeUnit.SECONDS)
             if (!ok) p.destroyForcibly()
-            val files = File("/data/local/tmp").listFiles()
+            val files = filesDir.listFiles()
                 ?.filter { it.name.startsWith("ffprobe_") && it.isFile }
                 ?.sortedBy { it.name }
                 ?: emptyList()
