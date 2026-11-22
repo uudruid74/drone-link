@@ -357,7 +357,6 @@ class DroneLinkService : Service() {
                                 }
                             }
                         }
-                        trafficCapture = cap.toString()
                     } catch (_: Exception) {
                     } finally {
                         runCatching { d.close() }
