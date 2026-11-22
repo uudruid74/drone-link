@@ -903,6 +903,39 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private native String _getVideoCodecInfo();
     private native String _getAudioCodecInfo();
 
+    // ------------------------------------------------------------------
+    // Vendor (CooingDV RC FPV) fork extensions — the libijkplayer.so the
+    // vendor ships registers these additional natives; upstream k0.8.8
+    // does not declare them, so registration aborts at load. Declared
+    // here with signatures verified against the .so string table (JNI
+    // registration requires the exact descriptor). None are called by
+    // DroneLink; they exist solely so the vendor library loads.
+    // ------------------------------------------------------------------
+    private native void _injectCacheNode(int index, long ptr, long size, long offset, long flags);
+    private native void _sendRtcpRrData(byte[] data, int len);
+    private native void _takePicture(String file, String path, int width, int height, int quality);
+    private native void _startRecordVideo(String file, String path, int width, int height);
+    private native void _stopRecordVideo();
+    private native void _prestartInsertVideo();
+    private native void _startInsertVideo(int width, int height, int format);
+    private native void _insertVideoData(byte[] data, int offset, int len, boolean eof);
+    private native void _stopInsertVideo();
+    private native void _setOutputVideo(boolean enable);
+    private native void _setOutputOriginalVideo(boolean enable);
+    private native boolean _setStretchedVrMode(boolean enable, boolean stretch);
+    private native void _setRotation180(boolean enable);
+    private native void _setTexcoordRect(float l, float t, float r, float b);
+    private native void _setVideoFilter(String type, String arg, String arg2, boolean enable);
+    private native void _setVideoFilterRotate(String arg, boolean enable);
+    private native void _setVideoFilterTranspose(String arg, boolean enable);
+    private native void _setVideoFilterRotate180();
+    private native void _setScale(float scale);
+    private native float _getScale();
+    private native void _skipFrame();
+    private native void _skipFrameInMS(long ms);
+    private native void _stopSkipFrame();
+    private native void _dropRecordFrame();
+
     public void setOption(int category, String name, String value)
     {
         _setOption(category, name, value);
