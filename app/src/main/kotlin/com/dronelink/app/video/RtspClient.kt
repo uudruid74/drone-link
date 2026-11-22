@@ -190,6 +190,13 @@ class RtspClient(
         // datagrams. Log the first packet and then every ~500 so a session
         // that negotiated but never streams is visible in the debug log.
         var logEvery = 1L
+        // Wire ground-truth capture: per-packet metadata for the first 2
+        // frames (offset/type/Q/W/H/marker/seq + first 16 payload bytes).
+        // Exposes offset accounting, fragment interleaving and header
+        // semantics without needing a packet capture on the device.
+        var diagFrames = 0
+        val diagLines = mutableListOf<String>()
+        var diagSeqPrev = -1
         while (running) {
             val pkt = DatagramPacket(buf, buf.size)
             val len = try {
@@ -219,6 +226,31 @@ class RtspClient(
             val payload = rtpPayload(buf, len)
             if (payload != null) {
                 reassembler.feed(payload, marker)
+                if (diagFrames < 2) {
+                    val seq = ((buf[2].toInt() and 0xFF) shl 8) or (buf[3].toInt() and 0xFF)
+                    val off = ((payload[1].toInt() and 0xFF) shl 16) or
+                        ((payload[2].toInt() and 0xFF) shl 8) or
+                        (payload[3].toInt() and 0xFF)
+                    val typ = payload[4].toInt() and 0xFF
+                    val q = payload[5].toInt() and 0xFF
+                    val w = payload[6].toInt() and 0xFF
+                    val h = payload[7].toInt() and 0xFF
+                    val sb = StringBuilder()
+                    sb.append("rtpDiag f=$diagFrames seq=$seq")
+                    if (diagSeqPrev >= 0) sb.append(" dseq=${seq - diagSeqPrev}")
+                    diagSeqPrev = seq
+                    sb.append(" off=$off type=${typ.toString(16)} q=$q w=$w h=$h marker=$marker len=${payload.size} rtpLen=$len")
+                    sb.append(" hex=")
+                    val n = minOf(16, payload.size)
+                    for (i in 0 until n) sb.append("%02x".format(payload[i]))
+                    diagLines += sb.toString()
+                    if (marker) {
+                        DebugLog.log(tag, diagLines.joinToString("\n"))
+                        diagLines.clear()
+                        diagFrames++
+                        diagSeqPrev = -1
+                    }
+                }
             }
         }
     }
