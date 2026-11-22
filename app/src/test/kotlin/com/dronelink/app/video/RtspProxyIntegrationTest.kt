@@ -146,8 +146,9 @@ class RtspProxyIntegrationTest {
             hdr[6] = 0x50       // width: 640 px
             hdr[7] = 0x3C       // height: 480 px
             var p = hdr
+            // Restart-marker header rides on EVERY fragment (type bit 0x40).
+            p += byteArrayOf(0x00, 0x28, 0xFF.toByte(), 0xFF.toByte()) // dri=40, F/L=1
             if (offset == 0) {
-                p += byteArrayOf(0x00, 0x28, 0xFF.toByte(), 0xFF.toByte()) // dri=40, F/L=1
                 val t = tables ?: ByteArray(128) { (it + 1).toByte() }
                 p += byteArrayOf(0, 0, 0, 0x80.toByte())
                 p += t

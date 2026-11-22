@@ -55,21 +55,28 @@ class Rfc2435Reassembler(
         val height = payload[7].toInt() and 0xFF
         var pos = 8
 
+        // The Restart Marker header (4 bytes: Restart Interval(16) |
+        // F(1) | L(1) | Restart Count(14)) rides on EVERY fragment when the
+        // Type field has bit 0x40 set — not just the first (FFmpeg
+        // rtpdec_jpeg.c consumes it for every packet). Leaking it into the
+        // scan inserts a 4-byte marker at each fragment boundary and breaks
+        // the entropy stream. `dri` is only needed for the header build.
+        var dri = 0
+        if ((type and 0x40) != 0) {
+            if (payload.size - pos < 4) return
+            if (offset == 0) {
+                dri = ((payload[pos].toInt() and 0xFF) shl 8) or
+                    (payload[pos + 1].toInt() and 0xFF)
+            }
+            pos += 4
+        }
+
         if (offset == 0) {
             // A new frame begins. Any partial previous frame is discarded.
             frameBuf = ByteArray(0)
             written = 0
             header = null
             sawStart = true
-
-            // The restart-marker header (dri, F/L bits, restart count) is sent by
-            // this camera on the first fragment only; consume it there.
-            var dri = 0
-            if ((type and 0x40) != 0) {
-                if (payload.size - pos < 4) return
-                dri = ((payload[pos].toInt() and 0xFF) shl 8) or (payload[pos + 1].toInt() and 0xFF)
-                pos += 4
-            }
 
             val tables: ByteArray = when {
                 q >= 128 -> {
@@ -297,7 +304,13 @@ class Rfc2435Reassembler(
             val out = java.io.ByteArrayOutputStream()
             fun table(classId: Int, bits: ByteArray, vals: ByteArray) {
                 out.write(classId)
-                out.write(bits)
+                // The IJG reference tables (``std_ac_luminance_nrcodes`` etc.)
+                // carry the unused index-0 placeholder, making them 17 bytes.
+                // The DHT segment wants exactly the 16 per-length counts — the
+                // placeholder would desync the decoder's table parse and break
+                // every huffman decode downstream.
+                val counts = if (bits.size == 17) bits.copyOfRange(1, 17) else bits
+                out.write(counts)
                 out.write(vals)
             }
             table(0x00, dcLumBits, dcLumVals)

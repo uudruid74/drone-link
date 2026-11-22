@@ -29,7 +29,10 @@ class Rfc2435ReassemblerTest {
         hdr[6] = width.toByte()
         hdr[7] = height.toByte()
         var p = hdr
-        if ((type and 0x40) != 0 && offset == 0) {
+        // The restart-marker header rides on EVERY fragment when type bit
+        // 0x40 is set (FFmpeg rtpdec_jpeg.c consumes it for every packet),
+        // not just the first.
+        if ((type and 0x40) != 0) {
             p += byteArrayOf((dri ushr 8).toByte(), (dri and 0xFF).toByte(), 0xFF.toByte(), 0xFF.toByte())
         }
         if (q >= 128 && offset == 0) {
@@ -204,6 +207,78 @@ class Rfc2435ReassemblerTest {
         // frame without restart headers still works
         r.feed(payload(0, scan(10), q = 75), marker = true)
         assertEquals(1, emitted.size)
+    }
+
+    @Test fun restartHeaderConsumedOnEveryFragment() {
+        // The live-corruption regression: when type bit 0x40 is set, every
+        // fragment carries a 4-byte restart-marker header (DRI + F/L/count).
+        // Leaking it into the scan inserts `00 28 ff ff` at each fragment
+        // boundary (snapshot-test3.jpg). The fabricated frame must contain
+        // the restart header exactly once — in the synthetic DRI segment —
+        // and the scan must be the clean concatenation.
+        val emitted = mutableListOf<ByteArray>()
+        val r = Rfc2435Reassembler { emitted += it }
+
+        val frag0 = scan(40)
+        val frag1 = scan(50)
+        val frag2 = scan(30)
+        r.feed(payload(0, frag0), marker = false)
+        r.feed(payload(40, frag1), marker = false)
+        r.feed(payload(90, frag2), marker = true)
+
+        assertEquals(1, emitted.size)
+        val frame = emitted[0]
+        val leak = byteArrayOf(0x00, 0x28, 0xFF.toByte(), 0xFF.toByte())
+        for (i in 0..frame.size - 4) {
+            assertFalse("restart header leaked into frame at byte $i",
+                frame[i] == leak[0] && frame[i + 1] == leak[1] &&
+                    frame[i + 2] == leak[2] && frame[i + 3] == leak[3])
+        }
+        // DRI appears exactly once (in the synthetic header).
+        val driIdx = indexOfSegment(frame, 0xDD)
+        assertTrue("DRI present", driIdx >= 0)
+        assertTrue("no second DRI", indexOfSegment(frame.copyOfRange(driIdx + 1, frame.size), 0xDD) == -1)
+        // Scan = clean concatenation of the fragments.
+        val sosIdx = indexOfSegment(frame, 0xDA)
+        val scanLen = ((frame[sosIdx + 2].toInt() and 0xFF) shl 8) or (frame[sosIdx + 3].toInt() and 0xFF)
+        val scanStart = sosIdx + 2 + scanLen
+        val scan = frame.copyOfRange(scanStart, frame.size - 2) // minus EOI
+        val expected = frag0 + frag1 + frag2
+        assertTrue("scan equals clean fragment concatenation",
+            scan.contentEquals(expected))
+    }
+
+    @Test fun syntheticDhtTablesAreWellFormed() {
+        // The DHT segment must carry four tables, each with exactly 16
+        // per-length count bytes and a value count matching the table's sum.
+        // The index-0 placeholder bug made the AC tables 17 count bytes,
+        // desyncing the decoder's table parse and breaking every huffman
+        // decode downstream.
+        val emitted = mutableListOf<ByteArray>()
+        val r = Rfc2435Reassembler { emitted += it }
+        r.feed(payload(0, scan(64)), marker = true)
+        val frame = emitted[0]
+
+        val dhtIdx = indexOfSegment(frame, 0xC4)
+        assertTrue("DHT present", dhtIdx >= 0)
+        val segLen = ((frame[dhtIdx + 2].toInt() and 0xFF) shl 8) or
+            (frame[dhtIdx + 3].toInt() and 0xFF)
+        // JPEG segment length counts itself (marker + 2 length bytes); the
+        // body starts after them and carries segLen - 2 bytes.
+        val body = frame.copyOfRange(dhtIdx + 4, dhtIdx + 2 + segLen)
+
+        val expectedIds = intArrayOf(0x00, 0x01, 0x10, 0x11)
+        val expectedCounts = intArrayOf(12, 12, 162, 162)
+        var p = 0
+        for (t in 0 until 4) {
+            assertEquals("table $t class/id", expectedIds[t], body[p].toInt() and 0xFF)
+            p += 1
+            val sum = body.copyOfRange(p, p + 16).sumOf { it.toInt() and 0xFF }
+            p += 16
+            assertEquals("table $t value count", expectedCounts[t], sum)
+            p += sum
+        }
+        assertEquals("DHT body fully consumed", body.size, p)
     }
 
     // ------------------------------------------------------------- helpers
