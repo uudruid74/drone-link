@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.3.5"  // ijkplayer vendor-stack decode (0.3.4 = custom RTSP/RTP path)
+        versionCode = 13
+        versionName = "0.3.6"  // JNI stub signature fixes (0.3.5 aborted on _prestartInsertVideo)
     }
 
     buildTypes {

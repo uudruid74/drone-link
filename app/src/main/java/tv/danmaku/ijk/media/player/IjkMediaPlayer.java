@@ -916,7 +916,7 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private native void _takePicture(String file, String path, int width, int height, int quality);
     private native void _startRecordVideo(String file, String path, int width, int height);
     private native void _stopRecordVideo();
-    private native void _prestartInsertVideo();
+    private native void _prestartInsertVideo(String file, String path, int width, int height);
     private native void _startInsertVideo(int width, int height, int format);
     private native void _insertVideoData(byte[] data, int offset, int len, boolean eof);
     private native void _stopInsertVideo();
