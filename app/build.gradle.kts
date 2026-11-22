@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.4.2"  // probe windows (analyzeduration/probesize); drop reconnect
+        versionCode = 20
+        versionName = "0.4.3"  // vendor option parity + sync surface attach before prepare
     }
 
     buildTypes {

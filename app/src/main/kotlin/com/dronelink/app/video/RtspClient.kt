@@ -54,6 +54,11 @@ internal class IjkBridgeImpl : IjkBridge {
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mjpeg-pix-fmt", 1L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-quality-min", 2L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "video-quality-max", 20L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-option-preset", 0L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-option-tune", 5L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-option-profile", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "x264-params", "crf=23")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "auto-drop-record-frame", 3L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "err_detect", "explode")
             // The drone's RTSP server only speaks UDP transport (the FFmpeg
             // reference `-rtsp_transport udp` path; TCP times out).
@@ -202,6 +207,10 @@ internal class RtspClient(
             }
             bridge.setOptions()
             bridge.setDataSource(url)
+            // Attach the render surface synchronously BEFORE prepare — the
+            // vendor's IjkVideoView attaches its surface at start(); without
+            // it some forks never leave the prepared wait on live streams.
+            MainActivity.videoTexture?.let { runCatching { bridge.attachSurface(it) } }
             bridge.onPrepared = {
                 synchronized(lock) {
                     running = true
