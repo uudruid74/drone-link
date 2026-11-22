@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 23
-        versionName = "0.5.0"  // kill ijk — restore vendor-template RTSP/RTP path on secondary net
+        versionCode = 24
+        versionName = "0.5.1"  // dynamic wire header + debug_frame + ffmpeg_probe (on-device stock ffmpeg)
     }
 
     buildTypes {

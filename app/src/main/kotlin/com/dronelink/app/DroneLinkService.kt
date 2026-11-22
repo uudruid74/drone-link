@@ -22,6 +22,9 @@ import com.dronelink.app.video.MjpegHttpServer
 import com.dronelink.app.video.RtspClient
 import com.dronelink.app.video.TcpSocketProvider
 import com.dronelink.app.video.UdpSocketProvider
+import java.io.File
+import java.util.Base64
+import java.util.concurrent.TimeUnit
 
 /**
  * Phase 1: joins the drone WiFi as a LOCAL-ONLY secondary network via
@@ -91,6 +94,7 @@ class DroneLinkService : Service() {
         val e = DroneEngine(transport)
         engine = e
         val s = McpServer(e, onEmergencyLand = ::onEmergencyLand, onDisconnect = ::onDisconnect)
+        s.ffmpegProbe = ::runFfmpegProbe
         try {
             s.start()
             mcp = s
@@ -168,6 +172,7 @@ class DroneLinkService : Service() {
                     mcp?.videoFeed = proxy
                     mcp?.videoPort = http.boundPort
                     mcp?.videoHostResolver = { guessExternalHost() }
+                    mcp?.videoFirstFrame = proxy.firstFrameDump
                     DebugLog.log("video", "proxy up: :${http.boundPort} (rtsp err=${proxy.error})")
                 } catch (e: Exception) {
                     DebugLog.log("service", "video proxy failed: ${e.message}")
@@ -199,6 +204,67 @@ class DroneLinkService : Service() {
         connectivityManager.requestNetwork(req, cb)
         request = req
         callback = cb
+    }
+
+    /**
+     * Run the on-device stock ffmpeg against the drone's RTSP while the
+     * process is bound to the drone network — the same trick the ijk path
+     * used, but with a REAL ffmpeg binary. Captures N JPEG frames to
+     * /data/local/tmp/ffprobe_%02d.jpg and returns them as base64, plus the
+     * ffmpeg stderr tail (negotiation/depacketization evidence).
+     */
+    private fun runFfmpegProbe(): Map<String, Any?> {
+        val network = JoinStatus.joinedNetwork
+            ?: return linkedMapOf("ok" to false, "error" to "not joined to drone network")
+        val bin = "/data/local/tmp/ffmpeg"
+        if (!File(bin).canExecute()) {
+            return linkedMapOf("ok" to false, "error" to "ffmpeg binary missing on device: $bin")
+        }
+        var bound = false
+        try {
+            connectivityManager.bindProcessToNetwork(network)
+            bound = true
+        } catch (e: Exception) {
+            return linkedMapOf("ok" to false, "error" to "bind: ${e.message}")
+        }
+        try {
+            val outPrefix = "/data/local/tmp/ffprobe_"
+            File("/data/local/tmp").listFiles()?.forEach { if (it.name.startsWith("ffprobe_")) it.delete() }
+            val pb = ProcessBuilder(
+                bin,
+                "-hide_banner", "-loglevel", "info",
+                "-y",
+                "-rtsp_transport", "udp",
+                "-stimeout", "8000000",
+                "-t", "6",
+                "-i", "rtsp://192.168.1.1:7070/webcam",
+                "-frames:v", "4",
+                "-f", "image2",
+                "$outPrefix%02d.jpg",
+            )
+            pb.redirectErrorStream(false)
+            val p = pb.start()
+            val err = p.errorStream.bufferedReader().readText()
+            val ok = p.waitFor(30, TimeUnit.SECONDS)
+            if (!ok) p.destroyForcibly()
+            val files = File("/data/local/tmp").listFiles()
+                ?.filter { it.name.startsWith("ffprobe_") && it.isFile }
+                ?.sortedBy { it.name }
+                ?: emptyList()
+            val frames = files.associate { f ->
+                f.name to Base64.getEncoder().encodeToString(f.readBytes())
+            }
+            return linkedMapOf(
+                "ok" to true,
+                "exit" to (if (ok) p.exitValue() else -99),
+                "stderr_tail" to err.takeLast(2000),
+                "frames" to frames,
+            )
+        } catch (e: Exception) {
+            return linkedMapOf("ok" to false, "error" to "ffmpeg run failed: ${e.message}")
+        } finally {
+            if (bound) runCatching { connectivityManager.bindProcessToNetwork(null) }
+        }
     }
 
     private fun createNotificationChannel() {

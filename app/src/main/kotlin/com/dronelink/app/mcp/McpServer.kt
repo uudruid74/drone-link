@@ -70,6 +70,11 @@ class McpServer(
     @Volatile
     var videoFirstFrame: ByteArray? = null
 
+    /** Runs the on-device stock ffmpeg against the drone RTSP while bound to
+     * the drone network. Set by the service. */
+    @Volatile
+    var ffmpegProbe: (() -> Map<String, Any?>)? = null
+
     data class ToolSpec(val name: String, val description: String, val schema: JSONObject)
 
     companion object {
@@ -228,6 +233,11 @@ class McpServer(
         ToolSpec(
             "debug_frame",
             "Return the first complete JPEG frame assembled this session as base64 (wire ground truth for offline ffmpeg verification).",
+            obj("type" to "object", "properties" to JSONObject()),
+        ),
+        ToolSpec(
+            "ffmpeg_probe",
+            "Run the on-device stock ffmpeg against the drone RTSP (bound to the drone network) and return the captured JPEG frames as base64.",
             obj("type" to "object", "properties" to JSONObject()),
         ),
     )
@@ -468,6 +478,11 @@ class McpServer(
                         "size" to f.size,
                         "jpeg_base64" to Base64.getEncoder().encodeToString(f),
                     )
+                }
+                "ffmpeg_probe" -> {
+                    val runner = ffmpegProbe
+                        ?: return errorResponse(id, -32000, "ffmpeg probe unavailable (service not set it)").toString()
+                    runner()
                 }
                 else -> return errorResponse(id, -32602, "Unknown tool: $name").toString()
             }
