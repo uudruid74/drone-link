@@ -23,6 +23,9 @@ import com.dronelink.app.video.RtspClient
 import com.dronelink.app.video.TcpSocketProvider
 import com.dronelink.app.video.UdpSocketProvider
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
@@ -207,28 +210,29 @@ class DroneLinkService : Service() {
     }
 
     /**
-     * Run the on-device stock ffmpeg against the drone's RTSP while the
-     * process is bound to the drone network — the same trick the ijk path
-     * used, but with a REAL ffmpeg binary. Captures N JPEG frames to
-     * /data/local/tmp/ffprobe_%02d.jpg and returns them as base64, plus the
-     * ffmpeg stderr tail (negotiation/depacketization evidence).
+     * Run the on-device stock ffmpeg against the drone's RTSP. The spawned
+     * child process cannot bind to the drone's secondary network (Android
+     * process binding doesn't propagate across exec), so ffmpeg talks to a
+     * loopback TCP forwarder running inside this (network-bound via scoped
+     * sockets) process, which relays to the drone. Uses RTSP-over-TCP
+     * interleave so all media rides the same relayed connection. Captures N
+     * JPEG frames to filesDir/ffprobe_%02d.jpg and returns them as base64,
+     * plus ffmpeg's stderr tail.
      */
     private fun runFfmpegProbe(): Map<String, Any?> {
         val network = JoinStatus.joinedNetwork
             ?: return linkedMapOf("ok" to false, "error" to "not joined to drone network")
         // The staging sandbox cannot read /data/local/tmp; the binary must be
-        // staged into filesDir (adb run-as cp ... files/ffmpeg). No fallback —
-        // if it's missing, fail loudly.
+        // staged into filesDir (adb run-as cp ... files/ffmpeg).
         val bin = File(filesDir, "ffmpeg")
         if (!bin.canExecute()) {
             return linkedMapOf("ok" to false, "error" to "ffmpeg binary missing in app files dir (stage via run-as)")
         }
-        var bound = false
-        try {
-            connectivityManager.bindProcessToNetwork(network)
-            bound = true
+        val forwarder = TcpForwarder(connectivityManager, network)
+        val localPort = try {
+            forwarder.start()
         } catch (e: Exception) {
-            return linkedMapOf("ok" to false, "error" to "bind: ${e.message}")
+            return linkedMapOf("ok" to false, "error" to "forwarder start failed: ${e.message}")
         }
         try {
             val outPrefix = File(filesDir, "ffprobe_").absolutePath
@@ -236,9 +240,9 @@ class DroneLinkService : Service() {
             val args = listOf(
                 "-hide_banner", "-loglevel", "info",
                 "-y",
-                "-rtsp_transport", "udp",
+                "-rtsp_transport", "tcp",
                 "-t", "6",
-                "-i", "rtsp://192.168.1.1:7070/webcam",
+                "-i", "rtsp://127.0.0.1:$localPort/webcam",
                 "-frames:v", "4",
                 "-f", "image2",
                 "$outPrefix%02d.jpg",
@@ -270,7 +274,68 @@ class DroneLinkService : Service() {
         } catch (e: Exception) {
             return linkedMapOf("ok" to false, "error" to "ffmpeg run failed: ${e.message}")
         } finally {
-            if (bound) runCatching { connectivityManager.bindProcessToNetwork(null) }
+            forwarder.stop()
+        }
+    }
+
+    /**
+     * Loopback TCP relay: accepts local connections (ffmpeg) and bridges them
+     * to the drone's RTSP port over a scoped socket bound to the drone
+     * network. Nothing here depends on process-level network binding.
+     */
+    private class TcpForwarder(
+        private val cm: ConnectivityManager,
+        private val network: Network,
+    ) {
+        private val server = ServerSocket()
+        @Volatile private var running = false
+        private val threads = mutableListOf<Thread>()
+
+        fun start(): Int {
+            server.reuseAddress = true
+            server.bind(InetSocketAddress("127.0.0.1", 0))
+            running = true
+            val acceptor = Thread { acceptLoop() }.apply { isDaemon = true; start() }
+            threads += acceptor
+            return server.localPort
+        }
+
+        private fun acceptLoop() {
+            while (running) {
+                val client = try { server.accept() } catch (e: Exception) { break }
+                var drone: Socket? = null
+                try {
+                    drone = ScopedSockets.newTcpSocket(
+                        cm, network, InetSocketAddress("192.168.1.1", 7070), 8000
+                    ).socket
+                } catch (e: Exception) {
+                    runCatching { client.close() }
+                    continue
+                }
+                val d = drone
+                val up = Thread {
+                    try { client.inputStream.copyTo(d.outputStream) } catch (_: Exception) {}
+                    finally {
+                        runCatching { d.close() }
+                        runCatching { client.close() }
+                    }
+                }.apply { isDaemon = true; start() }
+                val down = Thread {
+                    try { d.inputStream.copyTo(client.outputStream) } catch (_: Exception) {}
+                    finally {
+                        runCatching { d.close() }
+                        runCatching { client.close() }
+                    }
+                }.apply { isDaemon = true; start() }
+                threads += up
+                threads += down
+            }
+        }
+
+        fun stop() {
+            running = false
+            runCatching { server.close() }
+            threads.forEach { runCatching { it.interrupt() } }
         }
     }
 
