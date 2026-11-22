@@ -216,16 +216,12 @@ class DroneLinkService : Service() {
     private fun runFfmpegProbe(): Map<String, Any?> {
         val network = JoinStatus.joinedNetwork
             ?: return linkedMapOf("ok" to false, "error" to "not joined to drone network")
+        // The staging sandbox cannot read /data/local/tmp; the binary must be
+        // staged into filesDir (adb run-as cp ... files/ffmpeg). No fallback —
+        // if it's missing, fail loudly.
         val bin = File(filesDir, "ffmpeg")
         if (!bin.canExecute()) {
-            // First run after install: copy from /data/local/tmp (shell-pushed).
-            val src = File("/data/local/tmp/ffmpeg")
-            if (src.canRead()) {
-                runCatching { src.copyTo(bin, overwrite = true); bin.setExecutable(true, false) }
-            }
-            if (!bin.canExecute()) {
-                return linkedMapOf("ok" to false, "error" to "ffmpeg binary missing in app files dir")
-            }
+            return linkedMapOf("ok" to false, "error" to "ffmpeg binary missing in app files dir (stage via run-as)")
         }
         var bound = false
         try {
@@ -241,7 +237,6 @@ class DroneLinkService : Service() {
                 "-hide_banner", "-loglevel", "info",
                 "-y",
                 "-rtsp_transport", "udp",
-                "-stimeout", "8000000",
                 "-t", "6",
                 "-i", "rtsp://192.168.1.1:7070/webcam",
                 "-frames:v", "4",
