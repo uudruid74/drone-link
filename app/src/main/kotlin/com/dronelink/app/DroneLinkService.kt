@@ -272,6 +272,7 @@ class DroneLinkService : Service() {
                 "exit" to (if (ok) p.exitValue() else -99),
                 "stderr_tail" to err.takeLast(2000),
                 "stderr_full" to err,
+                "traffic" to forwarder.trafficCapture,
                 "frames" to frames,
             )
         } catch (e: Exception) {
@@ -296,6 +297,11 @@ class DroneLinkService : Service() {
         @Volatile private var running = false
         private val threads = mutableListOf<Thread>()
         private val udpRelays = mutableListOf<UdpRelay>()
+
+        /** Raw RTSP control traffic (both directions) for offline diagnosis. */
+        @Volatile
+        var trafficCapture: String = ""
+            private set
 
         fun start(): Int {
             server.reuseAddress = true
@@ -324,6 +330,7 @@ class DroneLinkService : Service() {
                     try {
                         val buf = ByteArray(8192)
                         val sb = StringBuilder()
+                        val cap = StringBuilder()
                         while (true) {
                             val n = client.inputStream.read(buf)
                             if (n < 0) break
@@ -331,6 +338,10 @@ class DroneLinkService : Service() {
                             d.outputStream.flush()
                             val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
                             sb.append(chunk)
+                            if (cap.length < 16000) {
+                                cap.append(chunk)
+                                if (cap.length > 16000) cap.setLength(16000)
+                            }
                             if (sb.length > 4096) sb.delete(0, sb.length - 4096)
                             val m = Regex("client_port=(\\d+)-(\\d+)").find(sb.toString())
                             if (m != null) {
@@ -344,6 +355,7 @@ class DroneLinkService : Service() {
                                 }
                             }
                         }
+                        trafficCapture = cap.toString()
                     } catch (_: Exception) {
                     } finally {
                         runCatching { d.close() }
@@ -351,8 +363,25 @@ class DroneLinkService : Service() {
                     }
                 }.apply { isDaemon = true; start() }
                 val down = Thread {
-                    try { d.inputStream.copyTo(client.outputStream) } catch (_: Exception) {}
-                    finally {
+                    try {
+                        val buf = ByteArray(8192)
+                        val cap = StringBuilder()
+                        while (true) {
+                            val n = d.inputStream.read(buf)
+                            if (n < 0) break
+                            client.outputStream.write(buf, 0, n)
+                            client.outputStream.flush()
+                            val chunk = String(buf, 0, n, Charsets.ISO_8859_1)
+                            if (cap.length < 16000) {
+                                cap.append(chunk)
+                                if (cap.length > 16000) cap.setLength(16000)
+                            }
+                        }
+                        synchronized(this) {
+                            trafficCapture = trafficCapture + "\n=== DOWN ===\n" + cap.toString()
+                        }
+                    } catch (_: Exception) {
+                    } finally {
                         runCatching { d.close() }
                         runCatching { client.close() }
                     }
