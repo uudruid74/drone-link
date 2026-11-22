@@ -272,7 +272,7 @@ class DroneLinkService : Service() {
                 "exit" to (if (ok) p.exitValue() else -99),
                 "stderr_tail" to err.takeLast(2000),
                 "stderr_full" to err,
-                "traffic" to forwarder.trafficCapture,
+                "traffic" to forwarder.upstreamCapture + "\n=== DOWN ===\n" + forwarder.downstreamCapture,
                 "frames" to frames,
             )
         } catch (e: Exception) {
@@ -300,8 +300,9 @@ class DroneLinkService : Service() {
 
         /** Raw RTSP control traffic (both directions) for offline diagnosis. */
         @Volatile
-        var trafficCapture: String = ""
-            private set
+        var upstreamCapture: String = ""
+        @Volatile
+        var downstreamCapture: String = ""
 
         fun start(): Int {
             server.reuseAddress = true
@@ -342,6 +343,7 @@ class DroneLinkService : Service() {
                                 cap.append(chunk)
                                 if (cap.length > 16000) cap.setLength(16000)
                             }
+                            upstreamCapture = cap.toString()
                             if (sb.length > 4096) sb.delete(0, sb.length - 4096)
                             val m = Regex("client_port=(\\d+)-(\\d+)").find(sb.toString())
                             if (m != null) {
@@ -376,10 +378,10 @@ class DroneLinkService : Service() {
                                 cap.append(chunk)
                                 if (cap.length > 16000) cap.setLength(16000)
                             }
+                            downstreamCapture = cap.toString()
                         }
-                        synchronized(this) {
-                            trafficCapture = trafficCapture + "\n=== DOWN ===\n" + cap.toString()
-                        }
+                        runCatching { d.close() }
+                        runCatching { client.close() }
                     } catch (_: Exception) {
                     } finally {
                         runCatching { d.close() }
