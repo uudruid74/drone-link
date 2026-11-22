@@ -65,7 +65,8 @@ class Rfc2435ReassemblerTest {
         val emitted = mutableListOf<ByteArray>()
         val r = Rfc2435Reassembler { emitted += it }
 
-        val tables = ByteArray(128) { (it % 250 + 1).toByte() }
+        // First luma quantizer 0x09 => closest vendor template is Q75.
+        val tables = ByteArray(128) { if (it == 0) 0x09 else ((it % 250) + 1).toByte() }
         val frag0 = scan(40)
         val frag1 = scan(50)
         val frag2 = scan(30)
@@ -82,32 +83,22 @@ class Rfc2435ReassemblerTest {
         assertTrue("frame starts with SOI",
             frame[0] == 0xFF.toByte() && frame[1] == 0xD8.toByte())
 
-        // APP0 JFIF
+        // Header is the vendor's 640x360 Q75 template verbatim.
+        val header = frame.copyOfRange(0, 605)
+        assertTrue("vendor Q75 header verbatim", header.contentEquals(Rfc2435Reassembler.VENDOR_Q75_HEADER))
+
+        // No APP0/JFIF, no DRI (vendor header has neither).
         val jfif = frame.indexOfList("JFIF\u0000".toByteArray(Charsets.ISO_8859_1))
-        assertTrue("JFIF APP0 present", jfif > 0)
+        assertEquals(-1, jfif)
+        assertEquals(-1, indexOfSegment(frame, 0xDD))
 
-        // DRI (restart markers)
-        val driIdx = indexOfSegment(frame, 0xDD)
-        assertTrue("DRI segment present", driIdx >= 0)
-        assertEquals(40, ((frame[driIdx + 4].toInt() and 0xFF) shl 8) or (frame[driIdx + 5].toInt() and 0xFF))
-
-        // DQT with the exact in-band tables
-        val dqtIdx = indexOfSegment(frame, 0xDB)
-        assertTrue("DQT segment present", dqtIdx >= 0)
-        val dataLen = ((frame[dqtIdx + 2].toInt() and 0xFF) shl 8) or (frame[dqtIdx + 3].toInt() and 0xFF)
-        assertEquals(2 + 2 * 65, dataLen)
-        assertEquals("table 0 bytes verbatim", tables.copyOfRange(0, 64).toList(),
-            frame.copyOfRange(dqtIdx + 5, dqtIdx + 5 + 64).toList())
-        assertEquals("table 1 bytes verbatim", tables.copyOfRange(64, 128).toList(),
-            frame.copyOfRange(dqtIdx + 70, dqtIdx + 70 + 64).toList())
-
-        // SOF0: height/width in pixels, 3 components, 4:2:0 sampling
+        // SOF0: 640x360, 3 components, 4:4:4 sampling.
         val sofIdx = indexOfSegment(frame, 0xC0)
         assertTrue("SOF0 present", sofIdx >= 0)
-        assertEquals(480, ((frame[sofIdx + 5].toInt() and 0xFF) shl 8) or (frame[sofIdx + 6].toInt() and 0xFF))
+        assertEquals(360, ((frame[sofIdx + 5].toInt() and 0xFF) shl 8) or (frame[sofIdx + 6].toInt() and 0xFF))
         assertEquals(640, ((frame[sofIdx + 7].toInt() and 0xFF) shl 8) or (frame[sofIdx + 8].toInt() and 0xFF))
         assertEquals(3, frame[sofIdx + 9].toInt() and 0xFF)
-        assertEquals(0x22, frame[sofIdx + 11].toInt() and 0xFF) // Y sampling 2x2
+        assertEquals(0x11, frame[sofIdx + 11].toInt() and 0xFF) // Y sampling 1x1 (4:4:4)
 
         // SOS present, scan fragments verbatim in order
         val sosIdx = indexOfSegment(frame, 0xDA)
@@ -131,19 +122,16 @@ class Rfc2435ReassemblerTest {
         assertTrue("scan bytes included", frame.indexOfList(scan(20)) >= 0)
     }
 
-    @Test fun derivedQuantTablesForQIn1to99() {
-        // q=75 -> S = 200 - 2*75 = 50; base luma 16 -> 8, 11 -> 6, ... 99 -> 50
+    @Test fun qIn1to99SelectsMatchingVendorHeader() {
+        // q=75 selects the vendor Q75 template verbatim (640x360, 4:4:4).
         val emitted = mutableListOf<ByteArray>()
         val r = Rfc2435Reassembler { emitted += it }
         r.feed(payload(0, scan(10), q = 75, tables = null), marker = true)
         val frame = emitted[0]
-        val dqtIdx = indexOfSegment(frame, 0xDB)
-        assertTrue("DQT present", dqtIdx >= 0)
-        // first luma entries: 16*50/100=8, 11*50/100=6 (IJG integer division: (v*S+50)/100)
-        assertEquals(8, frame[dqtIdx + 5].toInt() and 0xFF)
-        assertEquals(6, frame[dqtIdx + 6].toInt() and 0xFF)
-        // last chroma entry: 99 -> 50
-        assertEquals(50, frame[dqtIdx + 133].toInt() and 0xFF)
+        assertTrue("vendor Q75 header verbatim", frame.copyOfRange(0, 605).contentEquals(Rfc2435Reassembler.VENDOR_Q75_HEADER))
+        val sofIdx = indexOfSegment(frame, 0xC0)
+        assertEquals(360, ((frame[sofIdx + 5].toInt() and 0xFF) shl 8) or (frame[sofIdx + 6].toInt() and 0xFF))
+        assertEquals(0x11, frame[sofIdx + 11].toInt() and 0xFF)
     }
 
     @Test fun noRestartHeaderMeansNoDriSegment() {
@@ -213,9 +201,8 @@ class Rfc2435ReassemblerTest {
         // The live-corruption regression: when type bit 0x40 is set, every
         // fragment carries a 4-byte restart-marker header (DRI + F/L/count).
         // Leaking it into the scan inserts `00 28 ff ff` at each fragment
-        // boundary (snapshot-test3.jpg). The fabricated frame must contain
-        // the restart header exactly once — in the synthetic DRI segment —
-        // and the scan must be the clean concatenation.
+        // boundary (snapshot-test3.jpg). The fabricated frame's scan must be
+        // the clean concatenation — the restart header must never leak.
         val emitted = mutableListOf<ByteArray>()
         val r = Rfc2435Reassembler { emitted += it }
 
@@ -229,56 +216,59 @@ class Rfc2435ReassemblerTest {
         assertEquals(1, emitted.size)
         val frame = emitted[0]
         val leak = byteArrayOf(0x00, 0x28, 0xFF.toByte(), 0xFF.toByte())
-        for (i in 0..frame.size - 4) {
-            assertFalse("restart header leaked into frame at byte $i",
-                frame[i] == leak[0] && frame[i + 1] == leak[1] &&
-                    frame[i + 2] == leak[2] && frame[i + 3] == leak[3])
-        }
-        // DRI appears exactly once (in the synthetic header).
-        val driIdx = indexOfSegment(frame, 0xDD)
-        assertTrue("DRI present", driIdx >= 0)
-        assertTrue("no second DRI", indexOfSegment(frame.copyOfRange(driIdx + 1, frame.size), 0xDD) == -1)
-        // Scan = clean concatenation of the fragments.
+        // Scan region only (after SOS; the vendor header has no restart bytes).
         val sosIdx = indexOfSegment(frame, 0xDA)
         val scanLen = ((frame[sosIdx + 2].toInt() and 0xFF) shl 8) or (frame[sosIdx + 3].toInt() and 0xFF)
         val scanStart = sosIdx + 2 + scanLen
-        val scan = frame.copyOfRange(scanStart, frame.size - 2) // minus EOI
+        val scanEnd = frame.size - 2 // minus EOI
+        for (i in scanStart..scanEnd - 4) {
+            assertFalse("restart header leaked into scan at byte $i",
+                frame[i] == leak[0] && frame[i + 1] == leak[1] &&
+                    frame[i + 2] == leak[2] && frame[i + 3] == leak[3])
+        }
+        // Vendor header carries no DRI at all.
+        assertEquals(-1, indexOfSegment(frame, 0xDD))
+        // Scan = clean concatenation of the fragments.
+        val scan = frame.copyOfRange(scanStart, scanEnd)
         val expected = frag0 + frag1 + frag2
         assertTrue("scan equals clean fragment concatenation",
             scan.contentEquals(expected))
     }
 
-    @Test fun syntheticDhtTablesAreWellFormed() {
-        // The DHT segment must carry four tables, each with exactly 16
-        // per-length count bytes and a value count matching the table's sum.
-        // The index-0 placeholder bug made the AC tables 17 count bytes,
-        // desyncing the decoder's table parse and breaking every huffman
-        // decode downstream.
+    @Test fun vendorDhtTablesAreWellFormed() {
+        // The vendor emits four SEPARATE DHT segments (DC luma, AC luma,
+        // DC chroma, AC chroma), each with 16 per-length count bytes and a
+        // value count matching the sum of its counts.
         val emitted = mutableListOf<ByteArray>()
         val r = Rfc2435Reassembler { emitted += it }
         r.feed(payload(0, scan(64)), marker = true)
         val frame = emitted[0]
+        val header = frame.copyOfRange(0, 605)
 
-        val dhtIdx = indexOfSegment(frame, 0xC4)
-        assertTrue("DHT present", dhtIdx >= 0)
-        val segLen = ((frame[dhtIdx + 2].toInt() and 0xFF) shl 8) or
-            (frame[dhtIdx + 3].toInt() and 0xFF)
-        // JPEG segment length counts itself (marker + 2 length bytes); the
-        // body starts after them and carries segLen - 2 bytes.
-        val body = frame.copyOfRange(dhtIdx + 4, dhtIdx + 2 + segLen)
-
-        val expectedIds = intArrayOf(0x00, 0x01, 0x10, 0x11)
-        val expectedCounts = intArrayOf(12, 12, 162, 162)
-        var p = 0
-        for (t in 0 until 4) {
-            assertEquals("table $t class/id", expectedIds[t], body[p].toInt() and 0xFF)
-            p += 1
-            val sum = body.copyOfRange(p, p + 16).sumOf { it.toInt() and 0xFF }
-            p += 16
-            assertEquals("table $t value count", expectedCounts[t], sum)
-            p += sum
+        val expect = arrayOf(
+            intArrayOf(0x00, 31, 12),
+            intArrayOf(0x10, 181, 162),
+            intArrayOf(0x01, 31, 12),
+            intArrayOf(0x11, 181, 162),
+        )
+        var idx = 2
+        var t = 0
+        while (idx < header.size - 3 && t < expect.size) {
+            if (header[idx] != 0xFF.toByte()) break
+            val code = header[idx + 1].toInt() and 0xFF
+            val segLen = ((header[idx + 2].toInt() and 0xFF) shl 8) or
+                (header[idx + 3].toInt() and 0xFF)
+            if (code == 0xC4) {
+                assertEquals("DHT segment $t length", expect[t][1], segLen)
+                val body = header.copyOfRange(idx + 4, idx + 2 + segLen)
+                assertEquals("DHT table $t class/id", expect[t][0], body[0].toInt() and 0xFF)
+                val sum = body.copyOfRange(1, 17).sumOf { it.toInt() and 0xFF }
+                assertEquals("DHT table $t value count", expect[t][2], sum)
+                t++
+            }
+            idx += 2 + segLen
         }
-        assertEquals("DHT body fully consumed", body.size, p)
+        assertEquals("all four DHT segments present", expect.size, t)
     }
 
     // ------------------------------------------------------------- helpers

@@ -21,7 +21,7 @@ import java.net.DatagramSocket
 class TelemetryProbe(
     context: Context,
     private val network: Network,
-    private val ports: IntArray = intArrayOf(7070, 7098, 7099, 8080),
+    private val ports: IntArray = intArrayOf(7070, 7098, 7099, 8080, 8888, 8890, 9000, 8000),
 ) {
     private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
     private val sockets = mutableListOf<DatagramSocket>()

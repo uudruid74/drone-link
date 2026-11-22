@@ -243,6 +243,14 @@ class RtspClient(
                     sb.append(" hex=")
                     val n = minOf(16, payload.size)
                     for (i in 0 until n) sb.append("%02x".format(payload[i]))
+                    // Full payload dump for the first two packets of the first
+                    // frame: lets us reconstruct the exact wire entropy offline
+                    // and test decode hypotheses against the real bytes.
+                    if (diagFrames == 0 && diagLines.size < 2) {
+                        sb.append(" FULL=")
+                        val m = minOf(900, payload.size)
+                        for (i in 0 until m) sb.append("%02x".format(payload[i]))
+                    }
                     diagLines += sb.toString()
                     if (marker) {
                         DebugLog.log(tag, diagLines.joinToString("\n"))
