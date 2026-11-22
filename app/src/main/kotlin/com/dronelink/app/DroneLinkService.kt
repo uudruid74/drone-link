@@ -240,7 +240,7 @@ class DroneLinkService : Service() {
             val outPrefix = File(filesDir, "ffprobe_").absolutePath
             filesDir.listFiles()?.forEach { if (it.name.startsWith("ffprobe_")) it.delete() }
             val args = listOf(
-                "-hide_banner", "-loglevel", "info",
+                "-hide_banner", "-loglevel", "verbose",
                 "-y",
                 "-rtsp_transport", "udp",
                 "-t", "6",
@@ -271,6 +271,7 @@ class DroneLinkService : Service() {
                 "ok" to true,
                 "exit" to (if (ok) p.exitValue() else -99),
                 "stderr_tail" to err.takeLast(2000),
+                "stderr_full" to err,
                 "frames" to frames,
             )
         } catch (e: Exception) {
