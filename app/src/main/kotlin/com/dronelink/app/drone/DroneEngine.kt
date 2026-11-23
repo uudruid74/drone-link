@@ -261,13 +261,16 @@ class DroneEngine(
 
     // -- kill switch -----------------------------------------------------------
 
-    /** Engage the emergency kill switch. All further commands refuse. */
+    /** Engage the emergency kill switch (AI-control gate). All MCP commands refuse. */
     fun engageKillSwitch() {
         killed = true
         lockUntil = Double.POSITIVE_INFINITY
         clearTrajectory()
-        pulses.clear()
-        debugLog("engine", "KILL SWITCH engaged — MCP server stopping, neutral held until restart")
+        // NOTE: pulses (incl. the land hold) are intentionally NOT cleared —
+        // the control loop keeps streaming the land/neutral hold while gated.
+        // (Clearing them and throwing from packet() used to kill the ctlLoop
+        // and drop the drone link — Evan 2026-11-22/23.)
+        debugLog("engine", "KILL SWITCH engaged — AI control gated, drone link stays alive")
     }
 
     /** Clear the kill switch (button toggle "Enable MCP"). MCP tools re-enable. */
@@ -289,9 +292,13 @@ class DroneEngine(
     /**
      * Build the next control packet. TC (variant 10) = 9 bytes,
      * GL (anything else) = 21 bytes. Byte-for-byte identical to the oracle.
+     *
+     * NOTE: this runs on the background control loop and must NEVER throw —
+     * the kill gate is enforced at the command boundary (requireConnected),
+     * not here. While gated, deadman() forces neutral axes, so this keeps
+     * streaming the neutral hold frame (keeping the drone link alive).
      */
     fun packet(): ByteArray {
-        guardKill()
         var r = axes[0]
         var p = axes[1]
         var t = axes[2]
@@ -551,10 +558,20 @@ class DroneEngine(
         )
     }
 
-    fun cmdEmergencyLand(): Map<String, Any?> {
+    /**
+     * Emergency landing. Two behaviors (Evan 2026-11-22/23):
+     * - default (MCP tool): land pulse + neutral hold, connection stays alive,
+     *   NO command gate — the AI may keep operating afterwards.
+     * - gate=true (UI button): same landing + hold, PLUS the AI-control gate
+     *   (kills) so MCP tools refuse until rearm_mcp. The drone control socket
+     *   is never torn down in either path.
+     */
+    fun cmdEmergencyLand(gate: Boolean = false): Map<String, Any?> {
         requireConnected()
-        pulse("land", 4.0)
-        engageKillSwitch()
+        pulse("land", 8.0)
+        if (gate) {
+            engageKillSwitch()
+        }
         return linkedMapOf("ok" to true, "cmd" to "emergency_land", "status" to status())
     }
 

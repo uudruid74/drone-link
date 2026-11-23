@@ -90,10 +90,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnEmergencyLand.setOnClickListener {
-            // Toggle: "Emergency Land" -> land pulse + kill switch (MCP refuses
-            // all tools until re-armed); "Enable MCP" -> re-arm (kills cleared).
+            // Toggle: "Emergency Land" -> land + hold + gate AI control (MCP
+            // refuses tools until re-armed); "Enable MCP" -> re-arm (gate cleared).
+            // The drone control link stays connected in both directions.
             val tool = if (btnEmergencyLand.text.toString() == "Enable MCP") "rearm_mcp" else "emergency_land"
-            mcpCall(tool, null) { ok ->
+            val args = if (tool == "emergency_land") JSONObject().put("gate", true) else null
+            mcpCall(tool, args) { ok ->
                 runOnUiThread {
                     if (ok) {
                         btnEmergencyLand.text =

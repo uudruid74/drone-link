@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 31
-        versionName = "0.6.5"  // emergency-land button + rearm_mcp; battery removed
+        versionCode = 32
+        versionName = "0.6.6"  // emergency_land: tool=land+hold (no gate), button gates; link never drops
     }
 
     buildTypes {

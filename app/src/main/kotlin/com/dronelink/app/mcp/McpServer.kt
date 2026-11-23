@@ -114,9 +114,13 @@ class McpServer(
         ),
         ToolSpec(
             "emergency_land",
-            "EMERGENCY KILL SWITCH: lands, holds neutral, refuses all MCP tools " +
-                "until re-armed via rearm_mcp ('Enable MCP' button).",
-            obj("type" to "object", "properties" to JSONObject()),
+            "EMERGENCY LANDING: land pulse + neutral hold; the drone link stays " +
+                "connected. gate=true (UI button) additionally gates AI/MCP control " +
+                "until rearm_mcp; gate=false (default, AI) leaves control open.",
+            obj(
+                "type" to "object",
+                "properties" to JSONObject().put("gate", bool()),
+            ),
         ),
         ToolSpec(
             "fly_home",
@@ -436,10 +440,12 @@ class McpServer(
                 "takeoff" -> engine.cmdTakeoff()
                 "land" -> engine.cmdLand()
                 "emergency_land" -> {
-                    val r = engine.cmdEmergencyLand()
-                    // Kill switch: keep the MCP server up (so rearm_mcp can
-                    // re-arm) but refuse all tools until then.
-                    onEmergencyLand?.invoke()
+                    val gate = args.optBoolean("gate", false)
+                    val r = engine.cmdEmergencyLand(gate)
+                    if (gate) {
+                        // Button path: gate AI control (kill) — link stays up.
+                        onEmergencyLand?.invoke()
+                    }
                     r
                 }
                 "rearm_mcp" -> {

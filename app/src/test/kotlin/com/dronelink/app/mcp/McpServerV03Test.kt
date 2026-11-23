@@ -112,23 +112,36 @@ class McpServerV03Test {
         assertTrue(Base64.getDecoder().decode(call.getString("jpeg_base64")).contentEquals(frame))
     }
 
-    // ---- emergency_land kill switch ----
+    // ---- emergency_land / AI-control gate ----
 
-    @Test fun emergencyLandInvokesServerStop() {
-        callTool("emergency_land")
-        assertTrue("onEmergencyLand must be invoked", emergencyLandCalled)
+    @Test fun emergencyLandToolDoesNotInvokeServerStop() {
+        // AI path (default, no gate): no onEmergencyLand, no kill.
+        val res = callTool("emergency_land")
+        val call = JSONObject(resultText(res))
+        assertEquals("emergency_land", call.getString("cmd"))
+        assertEquals(false, call.getJSONObject("status").getBoolean("killed"))
+        assertFalse("onEmergencyLand must NOT be invoked for AI path", emergencyLandCalled)
+        // tools still usable right after
+        val ok = callTool("status")
+        assertFalse(ok.has("error"))
     }
 
-    @Test fun emergencyLandRefusesAllFurtherTools() {
-        callTool("emergency_land")
+    @Test fun emergencyLandButtonGatesAndRefusesToolsUntilRearm() {
+        callTool("emergency_land", "gate" to true)
+        assertTrue("onEmergencyLand must be invoked when gate=true", emergencyLandCalled)
         val res = callTool("status")
         val err = res.getJSONObject("error")
         assertEquals(-32000, err.getInt("code"))
         assertTrue(err.getString("message").contains("kill switch"))
+        // rearm clears the gate — status works again
+        val rearm = callTool("rearm_mcp")
+        assertEquals("rearm_mcp", JSONObject(resultText(rearm)).getString("cmd"))
+        val ok = callTool("status")
+        assertFalse(ok.has("error"))
     }
 
-    @Test fun emergencyLandStatusReflectsKilled() {
-        val res = callTool("emergency_land")
+    @Test fun emergencyLandButtonStatusReflectsKilled() {
+        val res = callTool("emergency_land", "gate" to true)
         val call = JSONObject(resultText(res))
         assertEquals(true, call.getJSONObject("status").getBoolean("killed"))
     }

@@ -195,23 +195,42 @@ class McpServerTest {
         assertEquals("takeoff", call.getString("cmd"))
     }
 
-    @Test fun emergencyLandEngagesKillAndRearmClears() {
-        // engage
-        val land = rpc("tools/call", JSONObject().put("name", "emergency_land"))
+    @Test fun emergencyLandToolLandsWithoutGateOrTeardown() {
+        // AI path: emergency_land (no gate) lands + holds, but neither gates
+        // AI control nor drops the connection.
+        val res = rpc("tools/call", JSONObject().put("name", "emergency_land"))
+        val text = res.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
+        val call = JSONObject(text)
+        assertEquals("emergency_land", call.getString("cmd"))
+        assertFalse(engine.killed)
+        // control stream still alive — takeoff works right after
+        val ok = rpc("tools/call", JSONObject().put("name", "takeoff"))
+        assertFalse(ok.has("error"))
+    }
+
+    @Test fun emergencyLandButtonGatesKillAndRearmClearsButLinkStaysAlive() {
+        // button path: gate=true
+        val land = rpc("tools/call", JSONObject()
+            .put("name", "emergency_land")
+            .put("arguments", JSONObject().put("gate", true)))
         val landText = land.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
         assertEquals("emergency_land", JSONObject(landText).getString("cmd"))
         assertTrue(engine.killed)
-        // all other tools refuse while killed
+        // link stays alive while gated: control packets still stream
+        val before = engine.sent
+        repeat(10) { engine.raw(engine.packet()) }
+        assertTrue(engine.sent > before)
+        assertEquals(listOf(128, 128, 0, 128), engine.axes.toList())
+        // all other tools refuse while gated
         val refused = rpc("tools/call", JSONObject().put("name", "takeoff"))
         assertTrue(refused.has("error"))
         assertEquals("emergency_land kill switch engaged — press 'Enable MCP' to re-arm",
             refused.getJSONObject("error").getString("message"))
-        // rearm works and clears
+        // rearm clears the gate; link still up
         val rearm = rpc("tools/call", JSONObject().put("name", "rearm_mcp"))
         val rearmText = rearm.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
         assertEquals("rearm_mcp", JSONObject(rearmText).getString("cmd"))
         assertFalse(engine.killed)
-        // takeoff works again
         val ok = rpc("tools/call", JSONObject().put("name", "takeoff"))
         assertFalse(ok.has("error"))
         assertTrue(ok.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text").contains("\"ok\":true"))

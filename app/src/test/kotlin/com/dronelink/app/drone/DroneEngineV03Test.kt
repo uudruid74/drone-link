@@ -94,12 +94,21 @@ class DroneEngineV03Test {
         assertEquals(0.toByte(), d.packet()[4])
     }
 
-    // ---- emergency_land kill switch ----
+    // ---- emergency_land / AI-control gate ----
 
-    @Test fun emergencyLandEngagesKillSwitch() {
+    @Test fun emergencyLandToolDoesNotGateByDefault() {
         val (d, _) = engine(10)
         d.setSticks(0.5, 0.0, 0.3, 0.0)
-        val res = d.cmdEmergencyLand()
+        val res = d.cmdEmergencyLand()   // AI path: no gate
+        assertEquals("emergency_land", res["cmd"])
+        assertEquals(false, res["status"]?.let { (it as Map<*, *>)["killed"] })
+        assertFalse(d.killed)
+    }
+
+    @Test fun emergencyLandGateEngagesKillSwitch() {
+        val (d, _) = engine(10)
+        d.setSticks(0.5, 0.0, 0.3, 0.0)
+        val res = d.cmdEmergencyLand(gate = true)   // button path: gates AI
         assertEquals("emergency_land", res["cmd"])
         assertEquals(true, res["status"]?.let { (it as Map<*, *>)["killed"] })
         assertTrue(d.killed)
@@ -107,21 +116,20 @@ class DroneEngineV03Test {
         assertTrue(d.lockUntil == Double.POSITIVE_INFINITY)
     }
 
-    @Test fun killedEngineRefusesCommands() {
+    @Test fun killedGateRefusesCommandsButPacketStillStreamsNeutral() {
         val (d, _) = engine(10)
-        d.cmdEmergencyLand()
+        d.cmdEmergencyLand(gate = true)
         try {
             d.cmdTakeoff()
             throw AssertionError("cmdTakeoff must refuse after kill switch")
         } catch (e: IllegalStateException) {
             assertTrue(e.message!!.contains("kill switch"))
         }
-        try {
-            d.packet()
-            throw AssertionError("packet() must refuse after kill switch")
-        } catch (e: IllegalStateException) {
-            assertTrue(e.message!!.contains("kill switch"))
-        }
+        // packet() is NOT gated: the control loop keeps streaming neutral
+        // frames so the drone link stays alive (Evan/Gopher 2026-11-23).
+        val pkt = d.packet()
+        assertEquals(listOf(128, 128, 0, 128), d.axes.toList())
+        assertTrue(pkt.isNotEmpty())
         try {
             d.setSticks(0.1, 0.0, 0.1, 0.0)
             throw AssertionError("setSticks must refuse after kill switch")
@@ -130,14 +138,21 @@ class DroneEngineV03Test {
         }
         // deadman stays true forever (neutral held)
         assertTrue(d.deadman())
+        // rearm clears the gate, link and control intact
+        d.cmdRearm()
+        assertFalse(d.killed)
+        d.cmdTakeoff()
+        d.setSticks(0.1, 0.0, 0.1, 0.0)
     }
 
     @Test fun statusReportsKilledAndHeartbeat() {
         val (d, _) = engine(10)
         assertEquals(false, d.status()["killed"])
-        d.cmdEmergencyLand()
+        d.cmdEmergencyLand(gate = true)
         assertEquals(true, d.status()["killed"])
         assertTrue(d.status().containsKey("heartbeat_active"))
+        d.cmdRearm()
+        assertEquals(false, d.status()["killed"])
     }
 
     // ---- autonomous heartbeat lifecycle ----
