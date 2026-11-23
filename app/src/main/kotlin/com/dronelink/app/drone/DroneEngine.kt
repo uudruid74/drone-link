@@ -427,6 +427,7 @@ class DroneEngine(
                 val wp = waypoints[i]
                 axes = intArrayOf(wp.roll, wp.pitch, wp.throttle, wp.yaw)
                 axesTs = now()  // keep dead-man off during trajectory
+                trajectoryDiag(elapsed, i, wp)
                 return
             }
         }
@@ -435,6 +436,21 @@ class DroneEngine(
         waypoints = mutableListOf()
         wpStart = 0.0
         wpIndex = 0
+        debugLog("trajectory", "finished — neutral")
+    }
+
+    private var lastTrajDiag = 0.0
+    private var lastDiagMsg = ""
+    @Volatile var trajTicks = 0
+
+    /** 1 Hz trajectory diagnostics — pin the "registered but not advancing" class. */
+    private fun trajectoryDiag(elapsed: Double, idx: Int, wp: Waypoint) {
+        trajTicks++
+        val t = now()
+        if (t - lastTrajDiag < 1.0) return
+        lastTrajDiag = t
+        lastDiagMsg = "tick elapsed=${"%.1f".format(elapsed)} idx=$idx axes=${wp.roll},${wp.pitch},${wp.throttle},${wp.yaw}"
+        debugLog("trajectory", lastDiagMsg)
     }
 
     fun setTrajectory(rawWaypoints: List<Map<String, Any?>>) {
@@ -456,6 +472,10 @@ class DroneEngine(
         waypoints = norm
         wpStart = 0.0
         wpIndex = 0
+        debugLog(
+            "trajectory",
+            "set ${norm.size} wp: throttle=${norm.firstOrNull()?.throttle} dur=${norm.firstOrNull()?.duration}",
+        )
     }
 
     fun clearTrajectory() {
@@ -502,6 +522,8 @@ class DroneEngine(
         "last_telemetry" to lastTelemetry,
         "trajectory_active" to waypoints.isNotEmpty(),
         "trajectory_index" to wpIndex,
+        "trajectory_ticks" to trajTicks,
+        "trajectory_diag" to lastDiagMsg.ifEmpty { null },
         "killed" to killed,
         "heartbeat_active" to hbRunning,
         "rtsp" to DroneProtocol.RTSP_URL,

@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 33
-        versionName = "0.6.7"  // camera motion confirmation (frame-diff) in status/snapshot
+        versionCode = 34
+        versionName = "0.6.8"  // trajectory diagnostics (trajectory_ticks/diag) to pin non-advancing issue
     }
 
     buildTypes {
