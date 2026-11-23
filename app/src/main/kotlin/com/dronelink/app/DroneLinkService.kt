@@ -103,7 +103,15 @@ class DroneLinkService : Service() {
      */
     private fun startEngineMcp() {
         if (mcp != null) return
-        val e = DroneEngine(transport)
+        val e = DroneEngine(
+            transport,
+            // Camera motion confirmation rides every status() (including
+            // takeoff/land/etc. responses) via this hook — the proxy reads it
+            // live, so it always reflects the latest frame diff.
+            extraStatus = {
+                proxyClient?.motion?.summary?.let { mapOf("motion" to it) } ?: emptyMap()
+            },
+        )
         engine = e
         val s = McpServer(e, onEmergencyLand = ::onEmergencyLand, onRearm = ::onRearm, onDisconnect = ::onDisconnect)
         s.ffmpegProbe = ::runFfmpegProbe

@@ -179,6 +179,23 @@ class RtspClient(
 
     // ------------------------------------------------------------ RTP receive
 
+    /** Camera motion confirmation (coarse frame-diff; see MotionTracker). */
+    val motion = MotionTracker()
+
+    private var lastMotionAt = 0L
+
+    /** Throttled (~1 Hz) JPEG → luma thumbnail → diff. Cheap; off the lock. */
+    private fun observeMotion(frame: ByteArray) {
+        val t = System.currentTimeMillis()
+        if (t - lastMotionAt < 800) return
+        lastMotionAt = t
+        try {
+            motion.observeLuma(JpegThumbnail.decode(frame))
+        } catch (_: Exception) {
+            // thumbnail decode failure must never break the video path
+        }
+    }
+
     private fun rtpLoop(s: DatagramSocket) {
         val buf = ByteArray(65536)
         // RFC 2435 depacketization: fragments placed by offset, frame done
@@ -187,6 +204,7 @@ class RtspClient(
         // frames).
         val reassembler = Rfc2435Reassembler { frame ->
             if (firstFrameDump == null) firstFrameDump = frame
+            observeMotion(frame)
             synchronized(lock) {
                 _latestFrame = frame
                 _frameVersion++

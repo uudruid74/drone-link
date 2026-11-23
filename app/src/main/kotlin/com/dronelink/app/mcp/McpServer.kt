@@ -6,6 +6,7 @@ import com.dronelink.app.net.AcceptedSocket
 import com.dronelink.app.net.ListeningSocket
 import com.dronelink.app.net.OsServerSocketFactory
 import com.dronelink.app.net.ServerSocketFactory
+import com.dronelink.app.video.RtspClient
 import com.dronelink.app.video.VideoFeed
 import org.json.JSONArray
 import org.json.JSONObject
@@ -522,10 +523,12 @@ class McpServer(
     private fun snapshotTool(): Map<String, Any?> {
         val frame = videoFeed?.latestFrame
             ?: return linkedMapOf("ok" to false, "error" to "no video frame yet")
+        val motion = (videoFeed as? RtspClient)?.motion?.summary
         return linkedMapOf(
             "ok" to true,
             "size" to frame.size,
             "jpeg_base64" to Base64.getEncoder().encodeToString(frame),
+            "motion" to (motion ?: mapOf("state" to "unknown")),
         )
     }
 

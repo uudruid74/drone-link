@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 32
-        versionName = "0.6.6"  // emergency_land: tool=land+hold (no gate), button gates; link never drops
+        versionCode = 33
+        versionName = "0.6.7"  // camera motion confirmation (frame-diff) in status/snapshot
     }
 
     buildTypes {
