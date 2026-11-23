@@ -30,7 +30,6 @@ import java.util.Base64
 class MainActivity : AppCompatActivity() {
 
     private lateinit var etSsid: EditText
-    private lateinit var tvBattery: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvNetwork: TextView
     private lateinit var tvDebug: TextView
@@ -38,8 +37,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imgSnapshot: ImageView
     private lateinit var btnJoin: Button
     private lateinit var btnStop: Button
+    private lateinit var btnEmergencyLand: Button
 
-    /** Auto-refresh ticker: keeps battery + debug log live without a button. */
+    /** Auto-refresh ticker: keeps status + debug log live without a button. */
     private val uiTicker = object : Runnable {
         override fun run() {
             refresh()
@@ -56,7 +56,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         etSsid = findViewById(R.id.et_ssid)
-        tvBattery = findViewById(R.id.tv_battery)
         tvStatus = findViewById(R.id.tv_status)
         tvNetwork = findViewById(R.id.tv_network)
         tvDebug = findViewById(R.id.tv_debug)
@@ -64,6 +63,7 @@ class MainActivity : AppCompatActivity() {
         imgSnapshot = findViewById(R.id.img_snapshot)
         btnJoin = findViewById(R.id.btn_join)
         btnStop = findViewById(R.id.btn_stop)
+        btnEmergencyLand = findViewById(R.id.btn_emergency_land)
 
         val prefs = getSharedPreferences("dronelink", Context.MODE_PRIVATE)
         etSsid.setText(prefs.getString("ssid", getString(R.string.default_ssid)))
@@ -87,6 +87,21 @@ class MainActivity : AppCompatActivity() {
 
         btnStop.setOnClickListener {
             stopService(Intent(this, DroneLinkService::class.java))
+        }
+
+        btnEmergencyLand.setOnClickListener {
+            // Toggle: "Emergency Land" -> land pulse + kill switch (MCP refuses
+            // all tools until re-armed); "Enable MCP" -> re-arm (kills cleared).
+            val tool = if (btnEmergencyLand.text.toString() == "Enable MCP") "rearm_mcp" else "emergency_land"
+            mcpCall(tool, null) { ok ->
+                runOnUiThread {
+                    if (ok) {
+                        btnEmergencyLand.text =
+                            if (tool == "emergency_land") "Enable MCP" else "Emergency Land"
+                        refresh()
+                    }
+                }
+            }
         }
 
         findViewById<Button>(R.id.btn_refresh).setOnClickListener { refresh() }
@@ -113,13 +128,6 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ status
 
     private fun refresh() {
-        // Battery telemetry (decoded from drone UDP status packets).
-        val batt = com.dronelink.app.drone.BatteryStatus
-        tvBattery.text = when {
-            batt.levelRaw == null -> "Battery: — (no status packet yet)"
-            batt.ageSeconds > 30 -> "Battery: ${batt.levelRaw} (stale ${batt.ageSeconds}s)"
-            else -> "Battery: ${batt.levelRaw} (marker ${batt.marker}, ${batt.ageSeconds}s old)"
-        }
         tvStatus.text = when (JoinStatus.state) {
             JoinState.IDLE -> "Idle. Enter SSID and tap Join."
             JoinState.REQUESTING -> "Requesting join: ${JoinStatus.detail}"
@@ -129,6 +137,9 @@ class MainActivity : AppCompatActivity() {
             JoinState.KILLED -> "KILL SWITCH: ${JoinStatus.detail}"
         }
         tvNetwork.text = activeNetworkSummary()
+        // Reflect the kill-switch state on the emergency button.
+        btnEmergencyLand.text =
+            if (JoinStatus.state == JoinState.KILLED) "Enable MCP" else "Emergency Land"
         // Debug log panel: last 80 entries.
         val lines = DebugLog.entries().takeLast(80).joinToString("\n") { "${it.stamp} [${it.tag}] ${it.message}" }
         tvDebug.text = lines
@@ -152,7 +163,7 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------- MCP + snapshot UI
 
     /** Call a tool on the local MCP server (127.0.0.1:8000). */
-    private fun mcpCall(tool: String, args: JSONObject?) {
+    private fun mcpCall(tool: String, args: JSONObject?, onResult: ((ok: Boolean) -> Unit)? = null) {
         DebugLog.log("ui", "mcp call: $tool")
         Thread {
             try {
@@ -174,17 +185,21 @@ class MainActivity : AppCompatActivity() {
                     val res = JSONObject(body)
                     if (res.has("error")) {
                         DebugLog.log("ui", "$tool error: ${res.getJSONObject("error").optString("message")}")
+                        onResult?.invoke(false)
                     } else {
                         val text = res.getJSONObject("result")
                             .getJSONArray("content").getJSONObject(0).getString("text")
                         DebugLog.log("ui", "$tool -> $text")
+                        onResult?.invoke(true)
                         if (tool == "snapshot") showSnapshot(text)
                     }
                 } else {
                     DebugLog.log("ui", "$tool http $code: ${body.take(120)}")
+                    onResult?.invoke(false)
                 }
             } catch (e: Exception) {
                 DebugLog.log("ui", "$tool failed: ${e.message}")
+                onResult?.invoke(false)
             } finally {
                 runOnUiThread { refresh() }
             }

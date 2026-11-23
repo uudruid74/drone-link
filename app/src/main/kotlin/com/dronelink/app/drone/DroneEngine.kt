@@ -270,6 +270,13 @@ class DroneEngine(
         debugLog("engine", "KILL SWITCH engaged — MCP server stopping, neutral held until restart")
     }
 
+    /** Clear the kill switch (button toggle "Enable MCP"). MCP tools re-enable. */
+    fun disengageKillSwitch() {
+        killed = false
+        lockUntil = 0.0
+        debugLog("engine", "kill switch cleared — MCP re-armed")
+    }
+
     /** Every command path must pass through this. */
     private fun guardKill() {
         if (killed) {
@@ -387,20 +394,9 @@ class DroneEngine(
             val b0 = data[0].toInt() and 0xFF
             variant = if (b0 !in DroneProtocol.GL_IDS) 10 else b0
         }
-        // photo/video notifications (and battery status) -> ack so the
-        // app-equivalent stays in sync. Vendor decode (classes3.dex
-        // DeviceBLFragment$4.onReceiver): data[2] marker 'M'/0x4D carries
-        // the battery byte at data[3]; 'X'/0x58 at data[4]. Store it.
-        if (data.size > 4) {
-            val marker = data[2].toInt() and 0xFF
-            if (marker == 0x4D) {
-                BatteryStatus.update('M', data[3].toInt() and 0xFF, lastTelemetry ?: "")
-                raw(byteArrayOf(9, 1))
-            } else if (marker == 0x58) {
-                BatteryStatus.update('X', data[4].toInt() and 0xFF, lastTelemetry ?: "")
-                raw(byteArrayOf(9, 2))
-            }
-        }
+        // photo/video notifications -> ack so the app-equivalent stays in sync.
+        // (Battery decode was removed 2026-11-23: the vendor firmware has no
+        // battery telemetry — see vendor-battery-telemetry reference.)
     }
 
     internal fun deadman(): Boolean {
@@ -560,6 +556,11 @@ class DroneEngine(
         pulse("land", 4.0)
         engageKillSwitch()
         return linkedMapOf("ok" to true, "cmd" to "emergency_land", "status" to status())
+    }
+
+    fun cmdRearm(): Map<String, Any?> {
+        disengageKillSwitch()
+        return linkedMapOf("ok" to true, "cmd" to "rearm_mcp", "status" to status())
     }
 
     fun cmdFlyHome(): Map<String, Any?> {

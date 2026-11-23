@@ -105,9 +105,8 @@ class DroneLinkService : Service() {
         if (mcp != null) return
         val e = DroneEngine(transport)
         engine = e
-        val s = McpServer(e, onEmergencyLand = ::onEmergencyLand, onDisconnect = ::onDisconnect)
+        val s = McpServer(e, onEmergencyLand = ::onEmergencyLand, onRearm = ::onRearm, onDisconnect = ::onDisconnect)
         s.ffmpegProbe = ::runFfmpegProbe
-        s.batteryProvider = { com.dronelink.app.drone.BatteryStatus.summary() }
         try {
             s.start()
             mcp = s
@@ -577,16 +576,26 @@ class DroneLinkService : Service() {
     }
 
     /**
-     * v0.3.0: emergency_land kill switch — the MCP server stops until the app
-     * restarts. Called by the MCP server after it executes emergency_land.
+     * v0.3.0: emergency_land kill switch — the engine refuses all MCP tools
+     * until re-armed via `rearm_mcp` (the "Enable MCP" button). Unlike the
+     * original version, the MCP server itself STAYS UP so the re-arm tool
+     * remains reachable.
      */
     fun onEmergencyLand() {
-        DebugLog.log("service", "emergency_land kill switch — stopping MCP server")
-        mcp?.stop()
-        mcp = null
+        DebugLog.log("service", "emergency_land kill switch engaged — MCP tools refused until rearm_mcp")
         JoinStatus.state = JoinState.KILLED
-        JoinStatus.detail = "kill switch engaged — MCP stopped until app restart"
+        JoinStatus.detail = "kill switch engaged — press Enable MCP to re-arm"
         updateNotification(getString(R.string.notif_killed))
+    }
+
+    /**
+     * Re-armed via `rearm_mcp` — mirrors onEmergencyLand state transition.
+     */
+    fun onRearm() {
+        DebugLog.log("service", "kill switch cleared — MCP re-armed")
+        JoinStatus.state = if (JoinStatus.joinedNetwork != null) JoinState.CONNECTED else JoinState.IDLE
+        JoinStatus.detail = if (JoinStatus.joinedNetwork != null) "connected ${JoinStatus.joinedNetwork}" else "idle — tap Join"
+        updateNotification("KILL SWITCH cleared — MCP re-armed")
     }
 
     /**

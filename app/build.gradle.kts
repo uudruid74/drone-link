@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 30
-        versionName = "0.6.4"  // full bind-release on stop/pre-join + telemetry probe :49836
+        versionCode = 31
+        versionName = "0.6.5"  // emergency-land button + rearm_mcp; battery removed
     }
 
     buildTypes {

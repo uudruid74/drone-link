@@ -257,18 +257,6 @@ class DroneEngineTest {
         assertEquals(1, d.rx)
     }
 
-    @Test fun rxPhotoAck() {
-        var clock = 100.0
-        val d = DroneEngine(RecordingTransport(), null) { clock }
-        d.handleReceive(byteArrayOf(0x01, 0x02, 0x4D, 0x00, 0x00, 0x00))
-        assertEquals(1, d.rx)
-        assertEquals("01 02 4d 00 00 00", d.lastTelemetry)
-        // ack [9,1] must have been sent (photo notification 0x4D)
-        assertEquals("09 01", hex((d.transport as RecordingTransport).sent.last()))
-    }
-
-    // ---- status shape ----
-
     @Test fun statusShape() {
         val (d, _) = engine(10)
         val s = d.status()

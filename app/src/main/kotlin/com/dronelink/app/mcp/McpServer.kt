@@ -40,6 +40,7 @@ class McpServer(
     private val engine: DroneEngine,
     private val port: Int = 8000,
     private val onEmergencyLand: (() -> Unit)? = null,
+    private val onRearm: (() -> Unit)? = null,
     private val onDisconnect: (() -> Unit)? = null,
     private val socketFactory: ServerSocketFactory = OsServerSocketFactory,
 ) {
@@ -74,10 +75,6 @@ class McpServer(
      * the drone network. Set by the service. */
     @Volatile
     var ffmpegProbe: (() -> Map<String, Any?>)? = null
-
-    /** Returns the decoded battery status. Set by the service. */
-    @Volatile
-    var batteryProvider: (() -> Map<String, Any?>)? = null
 
     data class ToolSpec(val name: String, val description: String, val schema: JSONObject)
 
@@ -117,8 +114,8 @@ class McpServer(
         ),
         ToolSpec(
             "emergency_land",
-            "EMERGENCY KILL SWITCH: lands, holds neutral, stops the MCP server. " +
-                "Restart the app to re-arm.",
+            "EMERGENCY KILL SWITCH: lands, holds neutral, refuses all MCP tools " +
+                "until re-armed via rearm_mcp ('Enable MCP' button).",
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
@@ -240,13 +237,13 @@ class McpServer(
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
-            "battery",
-            "Return the drone's battery telemetry as decoded from its UDP status packets (raw vendor value + marker + age).",
+            "ffmpeg_probe",
+            "Run the on-device stock ffmpeg against the drone RTSP (bound to the drone network) and return the captured JPEG frames as base64.",
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
-            "ffmpeg_probe",
-            "Run the on-device stock ffmpeg against the drone RTSP (bound to the drone network) and return the captured JPEG frames as base64.",
+            "rearm_mcp",
+            "Clear the emergency kill switch (re-arms all MCP tools).",
             obj("type" to "object", "properties" to JSONObject()),
         ),
     )
@@ -417,10 +414,13 @@ class McpServer(
             return errorResponse(id, -32602, "Unknown tool: $name").toString()
         }
         if (engine.killed) {
-            return errorResponse(
-                id, -32000,
-                "emergency_land kill switch engaged — restart the app to re-arm",
-            ).toString()
+            // Kill switch engaged: refuse every tool except the re-arm tool.
+            if (name != "rearm_mcp") {
+                return errorResponse(
+                    id, -32000,
+                    "emergency_land kill switch engaged — press 'Enable MCP' to re-arm",
+                ).toString()
+            }
         }
         return try {
             val result = when (name) {
@@ -437,8 +437,14 @@ class McpServer(
                 "land" -> engine.cmdLand()
                 "emergency_land" -> {
                     val r = engine.cmdEmergencyLand()
-                    // Kill switch: stop the MCP server (and everything else) now.
+                    // Kill switch: keep the MCP server up (so rearm_mcp can
+                    // re-arm) but refuse all tools until then.
                     onEmergencyLand?.invoke()
+                    r
+                }
+                "rearm_mcp" -> {
+                    val r = engine.cmdRearm()
+                    onRearm?.invoke()
                     r
                 }
                 "fly_home" -> engine.cmdFlyHome()
@@ -487,11 +493,6 @@ class McpServer(
                         "size" to f.size,
                         "jpeg_base64" to Base64.getEncoder().encodeToString(f),
                     )
-                }
-                "battery" -> {
-                    val provider = batteryProvider
-                        ?: return errorResponse(id, -32000, "battery provider unavailable (service not set it)").toString()
-                    provider()
                 }
                 "ffmpeg_probe" -> {
                     val runner = ffmpegProbe

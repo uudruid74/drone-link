@@ -202,29 +202,4 @@ class DroneEngineV03Test {
         d.handleReceive(byteArrayOf(0x01, 0x02, 0x4D, 0x00, 0x00, 0x00))
         assertTrue(logged.any { it.first == "rx" && it.second.contains("4d") })
     }
-
-    // ---- battery telemetry decode ----
-
-    @Test fun batteryMDecodeStoresLevelFromByte3() {
-        BatteryStatus.reset()
-        val d = DroneEngine(RecordingTransport(), 10)
-        d.handleReceive(byteArrayOf(0x01, 0x02, 0x4D, 0x46, 0x00, 0x00, 0x00))
-        assertEquals(0x46, BatteryStatus.levelRaw)
-        assertEquals('M', BatteryStatus.marker)
-    }
-
-    @Test fun batteryXDecodeStoresLevelFromByte4() {
-        BatteryStatus.reset()
-        val d = DroneEngine(RecordingTransport(), 10)
-        d.handleReceive(byteArrayOf(0x01, 0x02, 0x58, 0x00, 0x2A, 0x00, 0x00))
-        assertEquals(0x2A, BatteryStatus.levelRaw)
-        assertEquals('X', BatteryStatus.marker)
-    }
-
-    @Test fun batteryPacketTooShortDoesNotUpdate() {
-        BatteryStatus.reset()
-        val d = DroneEngine(RecordingTransport(), 10)
-        d.handleReceive(byteArrayOf(0x01, 0x02, 0x4D, 0x46))
-        assertNull(BatteryStatus.levelRaw)
-    }
 }

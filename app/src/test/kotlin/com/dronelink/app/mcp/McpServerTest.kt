@@ -84,7 +84,7 @@ class McpServerTest {
                 "connect", "disconnect", "takeoff", "land", "emergency_land",
                 "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "raw_udp_send", "udp_probe_send", "headless",
                 "calibrate", "set_gear", "status", "video_url", "snapshot",
-                "debug_log", "debug_frame", "battery", "ffmpeg_probe",
+                "debug_log", "debug_frame", "ffmpeg_probe", "rearm_mcp",
             ),
             names,
         )
@@ -193,6 +193,28 @@ class McpServerTest {
         val call = JSONObject(text)
         assertEquals(true, call.getBoolean("ok"))
         assertEquals("takeoff", call.getString("cmd"))
+    }
+
+    @Test fun emergencyLandEngagesKillAndRearmClears() {
+        // engage
+        val land = rpc("tools/call", JSONObject().put("name", "emergency_land"))
+        val landText = land.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
+        assertEquals("emergency_land", JSONObject(landText).getString("cmd"))
+        assertTrue(engine.killed)
+        // all other tools refuse while killed
+        val refused = rpc("tools/call", JSONObject().put("name", "takeoff"))
+        assertTrue(refused.has("error"))
+        assertEquals("emergency_land kill switch engaged — press 'Enable MCP' to re-arm",
+            refused.getJSONObject("error").getString("message"))
+        // rearm works and clears
+        val rearm = rpc("tools/call", JSONObject().put("name", "rearm_mcp"))
+        val rearmText = rearm.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text")
+        assertEquals("rearm_mcp", JSONObject(rearmText).getString("cmd"))
+        assertFalse(engine.killed)
+        // takeoff works again
+        val ok = rpc("tools/call", JSONObject().put("name", "takeoff"))
+        assertFalse(ok.has("error"))
+        assertTrue(ok.getJSONObject("result").getJSONArray("content").getJSONObject(0).getString("text").contains("\"ok\":true"))
     }
 
     @Test fun callTrajectoryShape() {
