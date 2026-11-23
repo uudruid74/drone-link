@@ -101,6 +101,8 @@ class DroneEngine(
     internal val transport: DroneTransport,
     private val forceVariant: Int? = null,
     private val extraStatus: () -> Map<String, Any?> = { emptyMap() },
+    /** Camera-feedback hover arming hook (wired to RtspClient.hoverArmed). */
+    private val onHoverStateChange: (Boolean) -> Unit = {},
     private val debugLog: (tag: String, msg: String) -> Unit = { _, _ -> },
     private val now: () -> Double = { System.currentTimeMillis() / 1000.0 },
 ) {
@@ -638,6 +640,7 @@ class DroneEngine(
         requireConnected()
         hover = enable
         hoverThrottle = throttle.coerceIn(0, 127)
+        onHoverStateChange(enable)
         if (!enable) {
             axes = DroneProtocol.NEUTRAL_AXES.copyOf()
             axesTs = now()

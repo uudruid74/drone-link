@@ -109,7 +109,17 @@ class DroneLinkService : Service() {
             // takeoff/land/etc. responses) via this hook — the proxy reads it
             // live, so it always reflects the latest frame diff.
             extraStatus = {
-                proxyClient?.motion?.summary?.let { mapOf("motion" to it) } ?: emptyMap()
+                buildMap {
+                    proxyClient?.motion?.summary?.let { put("motion", it) }
+                    proxyClient?.hover?.summary?.let { put("hover_pid", it) }
+                }
+            },
+            // Camera-feedback hover: arm the frame feed when hover mode is on,
+            // and apply the PI delta to the engine's hold throttle (clamped to
+            // a sane window; never when the kill gate is engaged).
+            onHoverStateChange = { armed ->
+                proxyClient?.hoverArmed = armed
+                if (armed) proxyClient?.hover?.reset()
             },
         )
         engine = e
@@ -187,6 +197,14 @@ class DroneLinkService : Service() {
                     )
                     proxy.start()
                     proxyClient = proxy
+                    // Camera-feedback hover: apply the PI delta to the engine's
+                    // hold throttle (clamped; never when the kill gate is on).
+                    proxy.onHoverDelta = { delta ->
+                        val eng = engine
+                        if (eng != null && eng.hover && !eng.killed) {
+                            eng.hoverThrottle = (eng.hoverThrottle + delta).coerceIn(40, 110)
+                        }
+                    }
                     val http = MjpegHttpServer(proxy)
                     http.start()
                     videoHttp = http

@@ -182,6 +182,18 @@ class RtspClient(
     /** Camera motion confirmation (coarse frame-diff; see MotionTracker). */
     val motion = MotionTracker()
 
+    /** Camera-feedback altitude hold (see HoverController). */
+    val hover = HoverController()
+
+    /** Arming flag set by the service when the engine's hover mode is on. */
+    @Volatile
+    var hoverArmed = false
+
+    /** Service callback: apply a suggested throttle delta to the engine hold. */
+    var onHoverDelta: ((Int) -> Unit)? = null
+
+    private var hoverPrevLuma: ByteArray? = null
+
     private var lastMotionAt = 0L
 
     /** Throttled (~1 Hz) JPEG → luma thumbnail → diff. Cheap; off the lock. */
@@ -190,7 +202,18 @@ class RtspClient(
         if (t - lastMotionAt < 800) return
         lastMotionAt = t
         try {
-            motion.observeLuma(JpegThumbnail.decode(frame))
+            val luma = JpegThumbnail.decode(frame)
+            motion.observeLuma(luma)
+            if (hoverArmed) {
+                val prev = hoverPrevLuma
+                if (prev != null) {
+                    val delta = hover.observe(prev, luma)
+                    onHoverDelta?.invoke(delta)
+                }
+                hoverPrevLuma = luma.copyOf()
+            } else {
+                hoverPrevLuma = null
+            }
         } catch (_: Exception) {
             // thumbnail decode failure must never break the video path
         }
