@@ -84,7 +84,16 @@ class McpServerV03Test {
         for (i in 0 until tools.length()) names += tools.getJSONObject(i).getString("name")
         assertTrue(names.contains("fly_home"))
         assertTrue(names.contains("snapshot"))
-        assertEquals(22, tools.length())
+        assertTrue(names.contains("hover"))
+        assertEquals(23, tools.length())
+    }
+
+    @Test fun hoverToolTogglesAndReports() {
+        val on = JSONObject(resultText(callTool("hover", "enable" to true)))
+        assertEquals(true, on.getBoolean("ok"))
+        assertEquals(true, on.getJSONObject("status").getBoolean("hover_active"))
+        val off = JSONObject(resultText(callTool("hover", "enable" to false)))
+        assertEquals(false, off.getJSONObject("status").getBoolean("hover_active"))
     }
 
     @Test fun flyHomeToolRuns() {

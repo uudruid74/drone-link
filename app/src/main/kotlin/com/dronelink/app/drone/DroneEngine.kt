@@ -139,6 +139,17 @@ class DroneEngine(
     @Volatile
     var wpIndex = 0
 
+    /**
+     * Altitude-hold ("Fixed Height", vendor `icon_fixed_height` H-pin toggle).
+     * TC(9B): sustains takeoff throttle on the control frame so the FC holds
+     * altitude (vendor app's fixed-height mode = centered throttle rocker +
+     * accelerator byte 0; our wire equivalent is continuous mid-range
+     * throttle). GL: the fixed-height flag bit is already set on every frame.
+     * Never overrides takeoff/land/estop pulses or the kill gate.
+     */
+    @Volatile
+    var hover = false
+
     @Volatile
     var sent = 0
 
@@ -347,6 +358,12 @@ class DroneEngine(
         if (fly && variant == 10 && t == 0) {
             t = DroneProtocol.TAKEOFF_THROTTLE
         }
+        // Altitude-hold: sustain mid-range throttle unless a pulse (land /
+        // estop / return) or the kill gate is active, or the pilot is
+        // commanding a stick.
+        if (hover && variant == 10 && t == 0 && !drop && !estop && !home && !killed) {
+            t = DroneProtocol.TAKEOFF_THROTTLE
+        }
         val cs = (((r xor p) xor t) xor y) xor fl
         return byteArrayOf(3, 0x66, r.toByte(), p.toByte(), t.toByte(), y.toByte(),
             (fl and 255).toByte(), (cs and 255).toByte(), 0x99.toByte())
@@ -524,6 +541,7 @@ class DroneEngine(
         "trajectory_index" to wpIndex,
         "trajectory_ticks" to trajTicks,
         "trajectory_diag" to lastDiagMsg.ifEmpty { null },
+        "hover_active" to hover,
         "killed" to killed,
         "heartbeat_active" to hbRunning,
         "rtsp" to DroneProtocol.RTSP_URL,
@@ -577,6 +595,30 @@ class DroneEngine(
             "status" to status(),
             "verified" to false,
             "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+        )
+    }
+
+    /**
+     * Altitude-hold toggle. Mirrors the vendor app's "Fixed Height" (H-pin)
+     * mode: when enabled, the control loop sustains takeoff throttle so the FC
+     * holds altitude instead of decaying to neutral (which drops). Land /
+     * estop / return pulses and the kill gate always override it. Disabling
+     * returns to neutral hold.
+     */
+    fun cmdHover(enable: Boolean): Map<String, Any?> {
+        requireConnected()
+        hover = enable
+        if (!enable) {
+            axes = DroneProtocol.NEUTRAL_AXES.copyOf()
+            axesTs = now()
+        }
+        return linkedMapOf(
+            "ok" to true,
+            "cmd" to "hover",
+            "enable" to enable,
+            "status" to status(),
+            "verified" to false,
+            "reason" to "hover mode set; altitude confirmation pending camera motion (motion/stable)",
         )
     }
 

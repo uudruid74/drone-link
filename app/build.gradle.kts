@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 34
-        versionName = "0.6.8"  // trajectory diagnostics (trajectory_ticks/diag) to pin non-advancing issue
+        versionCode = 35
+        versionName = "0.6.9"  // hover MCP tool: altitude-hold (vendor Fixed-Height H-pin equivalent)
     }
 
     buildTypes {

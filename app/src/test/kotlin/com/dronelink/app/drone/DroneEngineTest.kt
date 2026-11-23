@@ -238,6 +238,39 @@ class DroneEngineTest {
         assertEquals(0, d.wpIndex)
     }
 
+    // ---- hover (altitude hold) ----
+
+    @Test fun hoverSustainsTakeoffThrottle() {
+        val d = DroneEngine(RecordingTransport(), 10) { 100.0 }
+        d.hover = true
+        val p = d.packet()
+        assertEquals(3, p[0].toInt() and 0xff)
+        assertEquals(0x66, p[1].toInt() and 0xff)
+        // TC frame: [3, 0x66, roll, pitch, throttle, yaw, flags, cs, 0x99]
+        assertEquals(DroneProtocol.TAKEOFF_THROTTLE, p[4].toInt() and 0xff)
+    }
+
+    @Test fun hoverOffSendsNeutralThrottle() {
+        val d = DroneEngine(RecordingTransport(), 10) { 100.0 }
+        val p = d.packet()
+        assertEquals(0, p[4].toInt() and 0xff)
+    }
+
+    @Test fun hoverYieldsToUserStick() {
+        val d = DroneEngine(RecordingTransport(), 10) { 100.0 }
+        d.hover = true
+        d.setSticks(0.0, 0.0, 0.5, 0.0)  // throttle 0.5*127 ≈ 63
+        val p = d.packet()
+        assertEquals(63, p[4].toInt() and 0xff)
+    }
+
+    @Test fun hoverReflectedInStatus() {
+        val d = DroneEngine(RecordingTransport(), 10) { 100.0 }
+        assertEquals(false, d.status()["hover_active"])
+        d.hover = true
+        assertEquals(true, d.status()["hover_active"])
+    }
+
     // ---- rx / auto-variant ----
 
     @Test fun rxAutoDetectGl() {

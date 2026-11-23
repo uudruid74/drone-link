@@ -82,13 +82,13 @@ class McpServerTest {
         assertEquals(
             listOf(
                 "connect", "disconnect", "takeoff", "land", "emergency_land",
-                "fly_home", "fly", "trajectory", "stop_trajectory", "camera", "raw_udp_send", "udp_probe_send", "headless",
+                "fly_home", "fly", "trajectory", "stop_trajectory", "hover", "camera", "raw_udp_send", "udp_probe_send", "headless",
                 "calibrate", "set_gear", "status", "video_url", "snapshot",
                 "debug_log", "debug_frame", "ffmpeg_probe", "rearm_mcp",
             ),
             names,
         )
-        assertEquals(22, tools.length())
+        assertEquals(23, tools.length())
     }
 
     @Test fun flySchemaVerbatim() {

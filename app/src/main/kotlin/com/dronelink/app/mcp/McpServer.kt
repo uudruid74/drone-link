@@ -164,6 +164,19 @@ class McpServer(
             obj("type" to "object", "properties" to JSONObject()),
         ),
         ToolSpec(
+            "hover",
+            "Altitude-hold toggle (vendor 'Fixed Height' H-pin mode). When enabled, " +
+                "the control loop sustains takeoff throttle so the drone holds altitude " +
+                "instead of decaying to neutral (which drops). Land/estop/return pulses " +
+                "and the kill gate always override it. Disable returns to neutral hold. " +
+                "Confirmation is via camera motion (stable at altitude = hold).",
+            obj(
+                "type" to "object",
+                "properties" to JSONObject().put("enable", bool()),
+                "required" to required("enable"),
+            ),
+        ),
+        ToolSpec(
             "camera",
             "Switch camera: 1 = front, 2 = rear.",
             obj(
@@ -463,6 +476,7 @@ class McpServer(
                 )
                 "trajectory" -> engine.cmdTrajectory(parseWaypoints(args.optJSONArray("waypoints")))
                 "stop_trajectory" -> engine.cmdStopTrajectory()
+                "hover" -> engine.cmdHover(args.optBoolean("enable", true))
                 "camera" -> engine.cmdCamera(args.optInt("cam", 1))
                 "raw_udp_send" -> engine.rawUdpSend(args.optString("dataHex", ""))
                 "udp_probe_send" -> engine.udpProbeSend(
