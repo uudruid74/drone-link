@@ -102,7 +102,7 @@ class Rfc2435ReassemblerTest {
         assertEquals(352, ((frame[sofIdx + 5].toInt() and 0xFF) shl 8) or (frame[sofIdx + 6].toInt() and 0xFF))
         assertEquals(640, ((frame[sofIdx + 7].toInt() and 0xFF) shl 8) or (frame[sofIdx + 8].toInt() and 0xFF))
         assertEquals(3, frame[sofIdx + 9].toInt() and 0xFF)
-        assertEquals(0x11, frame[sofIdx + 11].toInt() and 0xFF) // Y sampling 1x1 (4:4:4)
+        assertEquals(0x22, frame[sofIdx + 11].toInt() and 0xFF) // Y sampling 2x2 (4:2:0) — live-verified
 
         // SOS present, scan fragments verbatim in order
         val sosIdx = indexOfSegment(frame, 0xDA)

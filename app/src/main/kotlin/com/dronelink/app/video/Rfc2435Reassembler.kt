@@ -481,7 +481,11 @@ class Rfc2435Reassembler(
             out.write(qt, 64, 64)
             // DHT x4 — vendor tables (same across all templates)
             for (seg in VENDOR_DHT_SEGMENTS) out.write(seg)
-            // SOF0 — 4:4:4, wire dimensions (h*8, w*8)
+            // SOF0 — 4:2:0 (Y 0x22, Cb/Cr 0x11), wire dimensions (h*8, w*8).
+            // LIVE-VERIFIED 2026-11-23: the camera's entropy is 4:2:0. Emitting
+            // 4:4:4 here decodes to a flat green field; 4:2:0 decodes to the
+            // real scene (A/B: same bytes, only the SOF0 sampling byte differs
+            // between the two outcomes — verified with ffmpeg locally).
             val h = hBlocks * 8
             val w = wBlocks * 8
             out.write(byteArrayOf(0xFF.toByte(), 0xC0.toByte(), 0x00, 0x11, 0x08))
@@ -489,7 +493,7 @@ class Rfc2435Reassembler(
             out.write(h and 0xFF)
             out.write((w shr 8) and 0xFF)
             out.write(w and 0xFF)
-            out.write(byteArrayOf(0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01))
+            out.write(byteArrayOf(0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01))
             // SOS
             out.write(byteArrayOf(0xFF.toByte(), 0xDA.toByte(), 0x00, 0x0C, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3F, 0x00))
             return out.toByteArray()

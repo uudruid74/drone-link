@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 28
-        versionName = "0.6.2"  // forwarder: frame every RTSP request (not just first); use RtspRewrite
+        versionCode = 29
+        versionName = "0.6.3"  // SOF0 Y sampling 4:2:0 (green-card fix)
     }
 
     buildTypes {
