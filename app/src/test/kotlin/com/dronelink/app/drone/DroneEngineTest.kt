@@ -271,6 +271,22 @@ class DroneEngineTest {
         assertEquals(true, d.status()["hover_active"])
     }
 
+    @Test fun hoverUsesConfiguredThrottle() {
+        val d = DroneEngine(RecordingTransport(), 10) { 100.0 }
+        d.hover = true
+        d.hoverThrottle = 80
+        assertEquals(80, d.packet()[4].toInt() and 0xff)
+    }
+
+    @Test fun statusWireAxesReflectHoverThrottle() {
+        val d = DroneEngine(RecordingTransport(), 10) { 100.0 }
+        d.hover = true
+        d.hoverThrottle = 70
+        val s = d.status()
+        assertEquals(listOf(128, 128, 70, 128), s["wire_axes"])
+        assertEquals(70, s["hover_throttle"])
+    }
+
     // ---- rx / auto-variant ----
 
     @Test fun rxAutoDetectGl() {

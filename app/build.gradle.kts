@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 35
-        versionName = "0.6.9"  // hover MCP tool: altitude-hold (vendor Fixed-Height H-pin equivalent)
+        versionCode = 36
+        versionName = "0.6.10"  // hover: tunable throttle + status wire_axes visibility
     }
 
     buildTypes {

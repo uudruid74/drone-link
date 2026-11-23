@@ -141,14 +141,18 @@ class DroneEngine(
 
     /**
      * Altitude-hold ("Fixed Height", vendor `icon_fixed_height` H-pin toggle).
-     * TC(9B): sustains takeoff throttle on the control frame so the FC holds
-     * altitude (vendor app's fixed-height mode = centered throttle rocker +
-     * accelerator byte 0; our wire equivalent is continuous mid-range
+     * TC(9B): sustains a commanded throttle on the control frame so the FC
+     * holds altitude (vendor app's fixed-height mode = centered throttle rocker
+     * + accelerator byte 0; our wire equivalent is continuous mid-range
      * throttle). GL: the fixed-height flag bit is already set on every frame.
      * Never overrides takeoff/land/estop pulses or the kill gate.
      */
     @Volatile
     var hover = false
+
+    /** Throttle (0..127) sustained while hover is on. Default = takeoff lift. */
+    @Volatile
+    var hoverThrottle = DroneProtocol.TAKEOFF_THROTTLE
 
     @Volatile
     var sent = 0
@@ -358,11 +362,11 @@ class DroneEngine(
         if (fly && variant == 10 && t == 0) {
             t = DroneProtocol.TAKEOFF_THROTTLE
         }
-        // Altitude-hold: sustain mid-range throttle unless a pulse (land /
+        // Altitude-hold: sustain commanded throttle unless a pulse (land /
         // estop / return) or the kill gate is active, or the pilot is
         // commanding a stick.
         if (hover && variant == 10 && t == 0 && !drop && !estop && !home && !killed) {
-            t = DroneProtocol.TAKEOFF_THROTTLE
+            t = hoverThrottle
         }
         val cs = (((r xor p) xor t) xor y) xor fl
         return byteArrayOf(3, 0x66, r.toByte(), p.toByte(), t.toByte(), y.toByte(),
@@ -527,25 +531,42 @@ class DroneEngine(
 
     // -- status ----------------------------------------------------------------------
 
-    fun status(): Map<String, Any?> = linkedMapOf(
-        "connected" to connected,
-        "variant" to (if (variant == 10) "TC(9B)" else "GL(21B)"),
-        "gear" to gear,
-        "headless" to headless,
-        "cam" to cam,
-        "axes" to axes.toList(),
-        "sent" to sent,
-        "rx" to rx,
-        "last_telemetry" to lastTelemetry,
-        "trajectory_active" to waypoints.isNotEmpty(),
-        "trajectory_index" to wpIndex,
-        "trajectory_ticks" to trajTicks,
-        "trajectory_diag" to lastDiagMsg.ifEmpty { null },
-        "hover_active" to hover,
-        "killed" to killed,
-        "heartbeat_active" to hbRunning,
-        "rtsp" to DroneProtocol.RTSP_URL,
-    ) + extraStatus()
+    fun status(): Map<String, Any?> {
+        // What actually rides the wire (axes may differ when hover sustains
+        // throttle or pulses are active). TC/GL frames index axes at 2..5.
+        val wire = try {
+            val p = packet()
+            listOf(
+                p[2].toInt() and 0xff,
+                p[3].toInt() and 0xff,
+                p[4].toInt() and 0xff,
+                p[5].toInt() and 0xff,
+            )
+        } catch (e: Exception) {
+            null
+        }
+        return linkedMapOf(
+            "connected" to connected,
+            "variant" to (if (variant == 10) "TC(9B)" else "GL(21B)"),
+            "gear" to gear,
+            "headless" to headless,
+            "cam" to cam,
+            "axes" to axes.toList(),
+            "wire_axes" to wire,
+            "sent" to sent,
+            "rx" to rx,
+            "last_telemetry" to lastTelemetry,
+            "trajectory_active" to waypoints.isNotEmpty(),
+            "trajectory_index" to wpIndex,
+            "trajectory_ticks" to trajTicks,
+            "trajectory_diag" to lastDiagMsg.ifEmpty { null },
+            "hover_active" to hover,
+            "hover_throttle" to hoverThrottle,
+            "killed" to killed,
+            "heartbeat_active" to hbRunning,
+            "rtsp" to DroneProtocol.RTSP_URL,
+        ) + extraStatus()
+    }
 
     // -- command handlers (mirror drone_daemon.py handle()) ------------------------------
 
@@ -600,14 +621,16 @@ class DroneEngine(
 
     /**
      * Altitude-hold toggle. Mirrors the vendor app's "Fixed Height" (H-pin)
-     * mode: when enabled, the control loop sustains takeoff throttle so the FC
-     * holds altitude instead of decaying to neutral (which drops). Land /
+     * mode: when enabled, the control loop sustains a commanded throttle so the
+     * FC holds altitude instead of decaying to neutral (which drops). Land /
      * estop / return pulses and the kill gate always override it. Disabling
-     * returns to neutral hold.
+     * returns to neutral hold. `throttle` (0..127, default 60 = takeoff lift)
+     * lets flight tests discriminate under-throttle from a wrong command.
      */
-    fun cmdHover(enable: Boolean): Map<String, Any?> {
+    fun cmdHover(enable: Boolean, throttle: Int = DroneProtocol.TAKEOFF_THROTTLE): Map<String, Any?> {
         requireConnected()
         hover = enable
+        hoverThrottle = throttle.coerceIn(0, 127)
         if (!enable) {
             axes = DroneProtocol.NEUTRAL_AXES.copyOf()
             axesTs = now()
@@ -616,6 +639,7 @@ class DroneEngine(
             "ok" to true,
             "cmd" to "hover",
             "enable" to enable,
+            "throttle" to hoverThrottle,
             "status" to status(),
             "verified" to false,
             "reason" to "hover mode set; altitude confirmation pending camera motion (motion/stable)",

@@ -2,6 +2,7 @@ package com.dronelink.app.mcp
 
 import com.dronelink.app.BuildConfig
 import com.dronelink.app.drone.DroneEngine
+import com.dronelink.app.drone.DroneProtocol
 import com.dronelink.app.net.AcceptedSocket
 import com.dronelink.app.net.ListeningSocket
 import com.dronelink.app.net.OsServerSocketFactory
@@ -166,13 +167,16 @@ class McpServer(
         ToolSpec(
             "hover",
             "Altitude-hold toggle (vendor 'Fixed Height' H-pin mode). When enabled, " +
-                "the control loop sustains takeoff throttle so the drone holds altitude " +
+                "the control loop sustains a throttle so the drone holds altitude " +
                 "instead of decaying to neutral (which drops). Land/estop/return pulses " +
                 "and the kill gate always override it. Disable returns to neutral hold. " +
+                "throttle (0..127, default 60) tunes the hold for flight tests. " +
                 "Confirmation is via camera motion (stable at altitude = hold).",
             obj(
                 "type" to "object",
-                "properties" to JSONObject().put("enable", bool()),
+                "properties" to JSONObject()
+                    .put("enable", bool())
+                    .put("throttle", int()),
                 "required" to required("enable"),
             ),
         ),
@@ -476,7 +480,10 @@ class McpServer(
                 )
                 "trajectory" -> engine.cmdTrajectory(parseWaypoints(args.optJSONArray("waypoints")))
                 "stop_trajectory" -> engine.cmdStopTrajectory()
-                "hover" -> engine.cmdHover(args.optBoolean("enable", true))
+                "hover" -> engine.cmdHover(
+                    args.optBoolean("enable", true),
+                    args.optInt("throttle", DroneProtocol.TAKEOFF_THROTTLE),
+                )
                 "camera" -> engine.cmdCamera(args.optInt("cam", 1))
                 "raw_udp_send" -> engine.rawUdpSend(args.optString("dataHex", ""))
                 "udp_probe_send" -> engine.udpProbeSend(
