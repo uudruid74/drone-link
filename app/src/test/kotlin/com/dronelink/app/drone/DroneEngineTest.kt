@@ -247,7 +247,7 @@ class DroneEngineTest {
         assertEquals(3, p[0].toInt() and 0xff)
         assertEquals(0x66, p[1].toInt() and 0xff)
         // TC frame: [3, 0x66, roll, pitch, throttle, yaw, flags, cs, 0x99]
-        assertEquals(DroneProtocol.TAKEOFF_THROTTLE, p[4].toInt() and 0xff)
+        assertEquals(DroneProtocol.HOVER_THROTTLE, p[4].toInt() and 0xff)
     }
 
     @Test fun hoverOffSendsNeutralThrottle() {

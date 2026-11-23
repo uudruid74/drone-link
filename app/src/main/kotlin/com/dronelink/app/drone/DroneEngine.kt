@@ -42,9 +42,15 @@ object DroneProtocol {
 
     /** Throttle deflection (0..127) sent together with FLAG_TAKEOFF on the
      * TC(9B) variant. Flag alone is not enough — the drone ACKs the arm
-     * flag but lifts only if the throttle axis is non-zero. Mid-range
+     * flag but only lifts if the throttle axis is non-zero. Mid-range
      * (gear-2 scale) lift by default. */
     const val TAKEOFF_THROTTLE = 60
+
+    /** Hover (altitude-hold) sustained throttle — vendor "Fixed Height" H-pin
+     * center: the vendor app holds byte3 at 128/255 ≈ 50% (onMove:
+     * setControlAccelerator(verticalValue+128) with the rocker frozen at
+     * center). Equivalent in our 0..127 scale = 64. */
+    const val HOVER_THROTTLE = 64
 
     // Telemetry auto-detect: first byte -> GL (21-byte) vs TC (9-byte)
     val GL_IDS = (90..101).toSet() + setOf(103, 82, 85, 88)
@@ -150,9 +156,10 @@ class DroneEngine(
     @Volatile
     var hover = false
 
-    /** Throttle (0..127) sustained while hover is on. Default = takeoff lift. */
+    /** Throttle (0..127) sustained while hover is on. Vendor H-pin center
+     * equivalent = 64 (128/255). */
     @Volatile
-    var hoverThrottle = DroneProtocol.TAKEOFF_THROTTLE
+    var hoverThrottle = DroneProtocol.HOVER_THROTTLE
 
     @Volatile
     var sent = 0
@@ -627,7 +634,7 @@ class DroneEngine(
      * returns to neutral hold. `throttle` (0..127, default 60 = takeoff lift)
      * lets flight tests discriminate under-throttle from a wrong command.
      */
-    fun cmdHover(enable: Boolean, throttle: Int = DroneProtocol.TAKEOFF_THROTTLE): Map<String, Any?> {
+    fun cmdHover(enable: Boolean, throttle: Int = DroneProtocol.HOVER_THROTTLE): Map<String, Any?> {
         requireConnected()
         hover = enable
         hoverThrottle = throttle.coerceIn(0, 127)

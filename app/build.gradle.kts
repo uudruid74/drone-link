@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 36
-        versionName = "0.6.10"  // hover: tunable throttle + status wire_axes visibility
+        versionCode = 37
+        versionName = "0.6.11"  // hover default = vendor H-pin center (64/127)
     }
 
     buildTypes {

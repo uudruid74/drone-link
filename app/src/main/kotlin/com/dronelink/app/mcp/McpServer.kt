@@ -170,7 +170,7 @@ class McpServer(
                 "the control loop sustains a throttle so the drone holds altitude " +
                 "instead of decaying to neutral (which drops). Land/estop/return pulses " +
                 "and the kill gate always override it. Disable returns to neutral hold. " +
-                "throttle (0..127, default 60) tunes the hold for flight tests. " +
+                "throttle (0..127, default 64 = vendor H-pin center) tunes the hold for flight tests. " +
                 "Confirmation is via camera motion (stable at altitude = hold).",
             obj(
                 "type" to "object",
@@ -482,7 +482,7 @@ class McpServer(
                 "stop_trajectory" -> engine.cmdStopTrajectory()
                 "hover" -> engine.cmdHover(
                     args.optBoolean("enable", true),
-                    args.optInt("throttle", DroneProtocol.TAKEOFF_THROTTLE),
+                    args.optInt("throttle", DroneProtocol.HOVER_THROTTLE),
                 )
                 "camera" -> engine.cmdCamera(args.optInt("cam", 1))
                 "raw_udp_send" -> engine.rawUdpSend(args.optString("dataHex", ""))
