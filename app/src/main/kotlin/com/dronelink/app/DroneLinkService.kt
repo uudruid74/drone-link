@@ -84,12 +84,15 @@ class DroneLinkService : Service() {
             ?: getString(R.string.default_ssid)
         startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_searching)))
         // Ensure a clean slate before every join: release any leftover session
-        // binds (Evan 2026-11-23).
+        // binds (Evan 2026-11-23) — but only if something is actually live.
+        DebugLog.log("service", "onStartCommand startId=$startId flags=$flags ssid=$ssid mcp=${mcp != null} engine=${engine != null}")
         releaseAllNetworking()
         JoinStatus.state = JoinState.REQUESTING
         JoinStatus.detail = "requesting $ssid"
         startEngineMcp()
+        DebugLog.log("service", "calling requestJoin")
         requestJoin(ssid)
+        DebugLog.log("service", "requestJoin returned")
         return START_STICKY
     }
 
@@ -125,6 +128,7 @@ class DroneLinkService : Service() {
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         connectivityManager.requestNetwork(cellReq, cellKeepAliveCb)
+        DebugLog.log("service", "cellular keep-alive request registered")
 
         val specifier = WifiNetworkSpecifier.Builder()
             .setSsid(ssid)
@@ -212,6 +216,7 @@ class DroneLinkService : Service() {
             }
         }
         connectivityManager.requestNetwork(req, cb)
+        DebugLog.log("service", "wifi specifier request registered (ssid=$ssid)")
         request = req
         callback = cb
     }
@@ -626,7 +631,14 @@ class DroneLinkService : Service() {
      * (Evan 2026-11-23: force-stop + full bind-release discipline).
      */
     private fun releaseAllNetworking(clearStatus: Boolean = false) {
-        DebugLog.log("service", "releasing all networking" + if (clearStatus) " (stop)" else " (pre-join)")
+        val hasLive = videoHttp != null || proxyClient != null || probe != null ||
+            engine != null || callback != null
+        DebugLog.log(
+            "service",
+            "releasing all networking" + if (clearStatus) " (stop)" else " (pre-join)" +
+                " live=$hasLive"
+        )
+        if (!hasLive && !clearStatus) return
         videoHttp?.stop()
         videoHttp = null
         proxyClient?.stop()
