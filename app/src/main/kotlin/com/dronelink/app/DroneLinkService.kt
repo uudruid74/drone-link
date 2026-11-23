@@ -249,6 +249,7 @@ class DroneLinkService : Service() {
                 "-rtsp_transport", "udp",
                 "-t", "6",
                 "-i", "rtsp://127.0.0.1:$localPort/webcam",
+                "-c:v", "copy",
                 "-frames:v", "4",
                 "-f", "image2",
                 "$outPrefix%02d.jpg",
