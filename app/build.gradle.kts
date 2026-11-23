@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 29
-        versionName = "0.6.3"  // SOF0 Y sampling 4:2:0 (green-card fix)
+        versionCode = 30
+        versionName = "0.6.4"  // full bind-release on stop/pre-join + telemetry probe :49836
     }
 
     buildTypes {

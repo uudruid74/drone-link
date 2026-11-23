@@ -83,6 +83,9 @@ class DroneLinkService : Service() {
             ?.takeIf { it.isNotBlank() }
             ?: getString(R.string.default_ssid)
         startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_searching)))
+        // Ensure a clean slate before every join: release any leftover session
+        // binds (Evan 2026-11-23).
+        releaseAllNetworking()
         JoinStatus.state = JoinState.REQUESTING
         JoinStatus.detail = "requesting $ssid"
         startEngineMcp()
@@ -616,26 +619,40 @@ class DroneLinkService : Service() {
         }
     }
 
-    override fun onDestroy() {
-        mcp?.stop()
-        engine?.shutdown()
-        probe?.stop()
-        probe = null
+    /**
+     * Release ALL networking: video proxy, telemetry probe, engine control
+     * socket, and every network callback. Called before a fresh join and at
+     * service destroy so no stale connection/bind blocks the next session
+     * (Evan 2026-11-23: force-stop + full bind-release discipline).
+     */
+    private fun releaseAllNetworking(clearStatus: Boolean = false) {
+        DebugLog.log("service", "releasing all networking" + if (clearStatus) " (stop)" else " (pre-join)")
         videoHttp?.stop()
         videoHttp = null
         proxyClient?.stop()
         proxyClient = null
-        mcp = null
-        engine = null
+        probe?.stop()
+        probe = null
+        engine?.shutdown()
         val cb = callback
         if (cb != null) {
             runCatching { connectivityManager.unregisterNetworkCallback(cb) }
         }
         callback = null
         request = null
-        JoinStatus.state = JoinState.IDLE
-        JoinStatus.detail = "service stopped"
-        JoinStatus.joinedNetwork = null
+        runCatching { connectivityManager.unregisterNetworkCallback(cellKeepAliveCb) }
+        if (clearStatus) {
+            JoinStatus.state = JoinState.IDLE
+            JoinStatus.detail = "service stopped"
+            JoinStatus.joinedNetwork = null
+        }
+    }
+
+    override fun onDestroy() {
+        releaseAllNetworking(clearStatus = true)
+        mcp?.stop()
+        mcp = null
+        engine = null
         super.onDestroy()
     }
 }
