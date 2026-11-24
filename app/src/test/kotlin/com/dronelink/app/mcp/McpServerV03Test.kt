@@ -203,8 +203,13 @@ class McpServerV03Test {
         )) {
             assertTrue("status missing $k", st.has(k))
         }
+        // v0.4 trust model: pulse commands confirm execution when the link is
+        // live (rx advancing); in this test the transport never receives telemetry,
+        // so they come back unconfirmed but with a non-failure reason.
         assertEquals(false, call.getBoolean("verified"))
-        assertTrue("no reason for unverified command", call.has("reason"))
+        val reason = call.getString("reason")
+        assertTrue("reason must read as pulse sent, not failure", reason.contains("pulse transmitted"))
+        assertFalse("reason must not read as failure", reason.contains("unconfirmed"))
     }
 
     @Test fun takeoffReturnsLivenessReadback() {

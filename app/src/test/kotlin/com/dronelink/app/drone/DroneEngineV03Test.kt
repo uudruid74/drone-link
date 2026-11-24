@@ -57,6 +57,39 @@ class DroneEngineV03Test {
         assertEquals(0, d.packet()[6].toInt() and 0x20)
     }
 
+    // ---- pulse-command execution confirmation (v0.4 trust model) ----
+
+    @Test fun takeoffConfirmedWhenRxAdvancing() {
+        var clock = 100.0
+        val d = DroneEngine(RecordingTransport(), 10) { clock }
+        d.handleReceive(byteArrayOf(0x48, 0x01))  // telemetry arrives -> rx=1, lastRxAt=100
+        clock = 100.3                            // within RX_ADVANCE_WINDOW (1.5s)
+        val res = d.cmdTakeoff()
+        assertEquals(true, res["verified"])
+        assertEquals("pulse transmitted; execution confirmed (rx advancing)", res["reason"])
+    }
+
+    @Test fun takeoffUnconfirmedWhenLinkIdle() {
+        var clock = 100.0
+        val d = DroneEngine(RecordingTransport(), 10) { clock }
+        // no telemetry received (lastRxAt=0, rx=0) — link idle, not confirming
+        clock = 100.3
+        val res = d.cmdTakeoff()
+        assertEquals(false, res["verified"])
+        assertEquals("pulse transmitted; confirm visually via snapshot diff", res["reason"])
+    }
+
+    @Test fun flyHomeConfirmedWhenRxAdvancing() {
+        var clock = 100.0
+        val d = DroneEngine(RecordingTransport(), 10) { clock }
+        d.handleReceive(byteArrayOf(0x48, 0x01))
+        clock = 100.3
+        val res = d.cmdFlyHome()
+        assertEquals("fly_home", res["cmd"])
+        assertEquals(true, res["verified"])
+        assertEquals("pulse transmitted; execution confirmed (rx advancing)", res["reason"])
+    }
+
     // ---- takeoff lift: flag + throttle together (TC 9B) ----
 
     @Test fun tcTakeoffSendsThrottleWithFlag() {

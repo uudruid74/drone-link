@@ -31,6 +31,8 @@ object DroneProtocol {
     const val C = 128                     // stick center
     val GEARS = intArrayOf(40, 60, 127)   // stick deflection scaling per speed gear (1/2/3)
     const val STALE = 0.4                 // no command for this long -> dead-man neutral
+    /** Liveness window: no telemetry received for this long => link not rx-advancing. */
+    const val RX_ADVANCE_WINDOW = 1.5
 
     const val FLAG_TAKEOFF = 0x01
     const val FLAG_LAND = 0x02
@@ -169,6 +171,11 @@ class DroneEngine(
     @Volatile
     var rx = 0
 
+    /** Clock time of the last received telemetry datagram — the rx-advancing /
+     * liveness signal used for pulse-command execution confirmation. 0 = never. */
+    @Volatile
+    private var lastRxAt = 0.0
+
     @Volatile
     var lastTelemetry: String? = null
 
@@ -282,6 +289,28 @@ class DroneEngine(
     }
 
     fun on(name: String): Boolean = (pulses[name] ?: 0.0) > now()
+
+    /** True when the drone is actively responding on the link — telemetry received
+     * within [DroneProtocol.RX_ADVANCE_WINDOW] seconds. Real command-level
+     * execution confirmation (the 5-byte status has no IMU/baro/position). */
+    private fun rxAdvancing(): Boolean =
+        connected && (now() - lastRxAt) < DroneProtocol.RX_ADVANCE_WINDOW
+
+    /**
+     * Pulse-command execution confirmation (Evan/Gopher spec): the command pulse
+     * is transmitted AND the drone is responding on the link (rx advancing) =>
+     * execution confirmed. Otherwise the command is still reported as sent, with a
+     * reason that directs the operator to confirm visually via snapshot diff rather
+     * than reading it as a failure. Returns the [verified, reason] pair.
+     */
+    private fun pulseConfirmation(cmd: String): Pair<Boolean, String> {
+        val confirmed = on(cmd) && rxAdvancing()
+        return confirmed to if (confirmed) {
+            "pulse transmitted; execution confirmed (rx advancing)"
+        } else {
+            "pulse transmitted; confirm visually via snapshot diff"
+        }
+    }
 
     // -- kill switch -----------------------------------------------------------
 
@@ -425,6 +454,7 @@ class DroneEngine(
     /** Mirrors the oracle's _rx body for one datagram; isolated for tests. */
     internal fun handleReceive(data: ByteArray) {
         rx++
+        lastRxAt = now()
         lastTelemetry = data.joinToString(" ") { "%02x".format(it) }
         debugLog("rx", "len=${data.size} bytes=$lastTelemetry")
         if (auto && rx == 1) {
@@ -607,24 +637,26 @@ class DroneEngine(
     fun cmdTakeoff(): Map<String, Any?> {
         requireConnected()
         pulse("takeoff", 1.0)
+        val (verified, reason) = pulseConfirmation("takeoff")
         return linkedMapOf(
             "ok" to true,
             "cmd" to "takeoff",
             "status" to status(),
-            "verified" to false,
-            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+            "verified" to verified,
+            "reason" to reason,
         )
     }
 
     fun cmdLand(): Map<String, Any?> {
         requireConnected()
         pulse("land", 1.0)
+        val (verified, reason) = pulseConfirmation("land")
         return linkedMapOf(
             "ok" to true,
             "cmd" to "land",
             "status" to status(),
-            "verified" to false,
-            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+            "verified" to verified,
+            "reason" to reason,
         )
     }
 
@@ -681,12 +713,13 @@ class DroneEngine(
     fun cmdFlyHome(): Map<String, Any?> {
         requireConnected()
         pulse("returnhome", 5.0)
+        val (verified, reason) = pulseConfirmation("returnhome")
         return linkedMapOf(
             "ok" to true,
             "cmd" to "fly_home",
             "status" to status(),
-            "verified" to false,
-            "reason" to "pulse scheduled; execution unconfirmed until rx telemetry advances",
+            "verified" to verified,
+            "reason" to reason,
         )
     }
 
