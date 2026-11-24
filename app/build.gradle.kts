@@ -11,8 +11,8 @@ android {
         applicationId = "com.dronelink.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 38
-        versionName = "0.6.12"  // camera-feedback hover PID (scale-estimate → throttle delta)
+        versionCode = 39
+        versionName = "0.6.13"  // hover PID: 10 Hz cadence + PD retune (latency design 2026-11)
     }
 
     buildTypes {

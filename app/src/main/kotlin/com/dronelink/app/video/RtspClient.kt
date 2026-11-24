@@ -192,27 +192,52 @@ class RtspClient(
     /** Service callback: apply a suggested throttle delta to the engine hold. */
     var onHoverDelta: ((Int) -> Unit)? = null
 
-    private var hoverPrevLuma: ByteArray? = null
+    /**
+     * Long-lived luma reference for the hover PID, refreshed every
+     * [HOVER_REF_FRAMES] frames (≈300 ms). Scale is estimated against this
+     * reference rather than the immediately previous frame: at 10 Hz a
+     * per-frame scale delta is sub-pixel (≈0.04–0.16 px on a 16–32 px
+     * thumbnail) and unresolvable by MAD; the window integrates the signal
+     * above the resolution floor while control still updates every frame.
+     */
+    private var hoverRefLuma: ByteArray? = null
+    private var hoverRefCount = 0
+    private val HOVER_REF_FRAMES = 3
 
     private var lastMotionAt = 0L
 
-    /** Throttled (~1 Hz) JPEG → luma thumbnail → diff. Cheap; off the lock. */
+    /**
+     * Cadence gate for camera feedback (motion + hover PID). 800 ms → 1 Hz
+     * caused the hover bob (corrections arrived a full cycle late); 100 ms →
+     * up to 10 Hz with per-second velocity normalization in HoverController.
+     */
+    private val MOTION_THROTTLE_MS = 100L
+
+    /** Throttled (≤10 Hz) JPEG → luma thumbnail → diff. Cheap; off the lock. */
     private fun observeMotion(frame: ByteArray) {
         val t = System.currentTimeMillis()
-        if (t - lastMotionAt < 800) return
+        if (t - lastMotionAt < MOTION_THROTTLE_MS) return
         lastMotionAt = t
         try {
             val luma = JpegThumbnail.decode(frame)
             motion.observeLuma(luma)
             if (hoverArmed) {
-                val prev = hoverPrevLuma
-                if (prev != null) {
-                    val delta = hover.observe(prev, luma)
+                // 32×32 for hover — 2× the spatial resolution of the motion
+                // diff, cheap under inSampleSize=4.
+                val hoverLuma = JpegThumbnail.decode(frame, 32)
+                val ref = hoverRefLuma
+                if (ref != null) {
+                    val delta = hover.observe(ref, hoverLuma)
                     onHoverDelta?.invoke(delta)
                 }
-                hoverPrevLuma = luma.copyOf()
+                hoverRefCount++
+                if (hoverRefCount >= HOVER_REF_FRAMES) {
+                    hoverRefLuma = hoverLuma.copyOf()
+                    hoverRefCount = 0
+                }
             } else {
-                hoverPrevLuma = null
+                hoverRefLuma = null
+                hoverRefCount = 0
             }
         } catch (_: Exception) {
             // thumbnail decode failure must never break the video path

@@ -87,4 +87,48 @@ class HoverControllerTest {
         }
         assertTrue(threw)
     }
+
+    @Test fun fastCadenceSlowDriftClimbDetected() {
+        // 10 Hz output cadence over a 0.3 s reference window. Synthetic blob
+        // pattern is low-frequency — the live textured floor resolves far
+        // smaller deltas (v0.6.12 flight saw ±2.5% at 1 s spacing); 6% is a
+        // robust lower bound for this probe.
+        val c = HoverController(dt = 0.3)
+        val a = base()
+        c.observe(a, a.copyOf())
+        val d = c.observe(a, zoom(a, 0.94))
+        assertTrue("expected negative delta for climb, got $d", d < 0)
+        assertTrue((c.summary["vel"] as Double) > 0.0)
+    }
+
+    @Test fun velocityNormalizedByDt() {
+        val slow = HoverController(dt = 0.8)
+        val fast = HoverController(dt = 0.1)
+        val a = base()
+        val curr = zoom(a, 1.06)
+        slow.observe(a, curr)
+        fast.observe(a, curr)
+        val vSlow = slow.summary["vel"] as Double
+        val vFast = fast.summary["vel"] as Double
+        // same scene pair ⇒ same scale ⇒ velocity proxy scales inversely with dt
+        assertEquals(vSlow * 8.0, vFast, 1e-9)
+        assertTrue(vSlow < 0.0 && vFast < 0.0)
+    }
+
+    @Test fun derivativeTermDampsFromSecondSample() {
+        val c = HoverController()
+        val a = base()
+        c.observe(a, zoom(a, 1.05))   // descent starts — no derivative on first sample
+        assertEquals(0.0, c.summary["dterm"] as Double, 1e-9)
+        c.observe(a, zoom(a, 0.95))   // reversal — derivative opposes the error trend
+        val dterm = c.summary["dterm"] as Double
+        assertTrue("expected damping dterm < 0, got $dterm", dterm < 0.0)
+    }
+
+    @Test fun summaryExposesTuning() {
+        val c = HoverController()
+        assertEquals(50.0, c.summary["kp"] as Double, 1e-9)
+        assertEquals(15.0, c.summary["kd"] as Double, 1e-9)
+        assertEquals(0.3, c.summary["dt"] as Double, 1e-9)
+    }
 }

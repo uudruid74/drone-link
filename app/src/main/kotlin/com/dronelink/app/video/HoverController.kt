@@ -6,29 +6,38 @@ package com.dronelink.app.video
  * is the only closed-loop sensor.
  *
  * Principle: as the drone rises, ground features shrink (scene contracts); as
- * it descends, they grow (scene expands). Between two consecutive luma
- * thumbnails we estimate the scale factor s that best matches the previous
- * frame to the current one (nearest-neighbour resize, MAD). s < 1 ⇒ scene
- * shrank ⇒ rising; s > 1 ⇒ descending. Vertical-velocity estimate vel = 1 - s
- * (clamped), smoothed with an EMA, then fed to a PI controller that adjusts the
- * hover throttle around the base hold value.
+ * it descends, they grow (scene expands). Between the current luma thumbnail
+ * and a slowly-refreshed reference (3 frames ≈ 300 ms) we estimate the scale
+ * factor s that best matches the reference to the current frame (bilinear
+ * resize, MAD). s < 1 ⇒ scene shrank ⇒ rising; s > 1 ⇒ descending.
+ * Vertical-velocity estimate vel = (1 - s) / dt — normalized to per-second
+ * units so deadband/gains stay meaningful regardless of cadence (v0.6.13:
+ * loop runs at ~10 Hz output cadence over a dt ≈ 0.3 s reference window) —
+ * clamped, EMA-smoothed, then fed to a PD controller that adjusts the hover
+ * throttle around the base hold value.
  *
  * Sign conventions: delta > 0 ⇒ more throttle (counter a descent); delta < 0
  * ⇒ less throttle (counter a climb). Output is a small integer delta the caller
  * adds to the base hold throttle.
  *
+ * Gains are starting points for the flight retune (latency design note
+ * references/hover-pid-latency-design-2026-11.md): kp 40–60, ki 8–12, kd
+ * small — the derivative term damps overshoot at 10 Hz.
+ *
  * Pure-Kotlin core (JVM-testable); the frame plumbing lives in RtspClient.
  */
 class HoverController(
-    private val emaAlpha: Double = 0.3,
-    private val kp: Double = 140.0,
-    private val ki: Double = 25.0,
-    private val dt: Double = 0.8,
+    private val emaAlpha: Double = 0.45,
+    private val kp: Double = 50.0,
+    private val ki: Double = 10.0,
+    private val kd: Double = 15.0,
+    private val dt: Double = 0.3,
     private val deltaClamp: Int = 24,
     private val integralClamp: Double = 8.0,
     private val deadband: Double = 0.004,
 ) {
-    private val scales = doubleArrayOf(0.95, 0.975, 1.0, 1.025, 1.05)
+    /** Fine scale grid — resolves the small per-frame changes at ~10 Hz. */
+    private val scales = DoubleArray(33) { 0.96 + it * 0.0025 }
 
     private var emaVel = 0.0
     private var integral = 0.0
@@ -36,6 +45,8 @@ class HoverController(
     private var lastScale = 1.0
     private var lastVel = 0.0
     private var lastErr = 0.0
+    private var lastDTerm = 0.0
+    private var havePrev = false
     private var observed = 0
 
     val summary: Map<String, Any?> get() = linkedMapOf(
@@ -44,8 +55,12 @@ class HoverController(
         "vel" to lastVel,
         "ema" to emaVel,
         "err" to lastErr,
+        "dterm" to lastDTerm,
         "delta" to lastDelta,
         "integral" to integral,
+        "kp" to kp,
+        "kd" to kd,
+        "dt" to dt,
         "observed" to observed,
     )
 
@@ -57,6 +72,8 @@ class HoverController(
         lastScale = 1.0
         lastVel = 0.0
         lastErr = 0.0
+        lastDTerm = 0.0
+        havePrev = false
     }
 
     /**
@@ -81,18 +98,26 @@ class HoverController(
             }
         }
         lastScale = bestS
-        lastVel = (1.0 - bestS).coerceIn(-0.05, 0.05)
+        // Per-second velocity proxy — keeps deadband/gains meaningful as the
+        // cadence rises from 1 Hz to ~10 Hz (each frame now covers dt seconds).
+        lastVel = ((1.0 - bestS) / dt).coerceIn(-0.5, 0.5)
         emaVel = emaAlpha * lastVel + (1.0 - emaAlpha) * emaVel
 
-        // 2) PI
+        // 2) PD — derivative only from the second sample on (no arm-time kick).
         val err = -emaVel
+        lastDTerm = if (havePrev) {
+            (kd * (err - lastErr) / dt).coerceIn(-deltaClamp.toDouble(), deltaClamp.toDouble())
+        } else {
+            0.0
+        }
         lastErr = err
+        havePrev = true
         if (kotlin.math.abs(err) < deadband) {
             integral = 0.0
             lastDelta = 0
         } else {
             integral = (integral + ki * err * dt).coerceIn(-integralClamp, integralClamp)
-            var d = (kp * err + integral).toInt()
+            var d = (kp * err + integral + lastDTerm).toInt()
             d = d.coerceIn(-deltaClamp, deltaClamp)
             lastDelta = d
         }

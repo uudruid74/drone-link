@@ -54,9 +54,15 @@ class MotionTracker(
 
 /** Android-side JPEG -> luma thumbnail (16×16). Uses BitmapFactory. */
 object JpegThumbnail {
-    /** Decode a JPEG and return a 16×16 luma (Y) thumbnail. */
+    /**
+     * Decode a JPEG and return a 16×16 luma (Y) thumbnail. Uses
+     * inSampleSize=4 so the decode reads ~1/16 of the source pixels — the
+     * camera-feedback loop now runs at up to 10 Hz and full decodes
+     * (20–40 ms) would starve the RTP receiver thread.
+     */
     fun decode(jpeg: ByteArray, size: Int = 16): ByteArray {
-        val bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
             ?: return ByteArray(size * size)
         val scaled = if (bmp.width == size && bmp.height == size) {
             bmp
