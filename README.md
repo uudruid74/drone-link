@@ -10,6 +10,10 @@ The laptop (or any agent) reaches the phone's MCP server over the tailnet at
 `http://<phone-tailnet-ip>:8000/mcp` and drives the drone. **This is a
 replacement for the closed-source RC FPV app** — a scriptable control surface.
 
+## What it looks like
+
+![DroneLink app — Join drone WiFi, Emergency Land, Fly Home, Snapshot, and a live RTSP debug log](docs/app-screenshot.jpg)
+
 ## Chipset / protocol target
 
 - **Chipset:** Jieli WiFi module (CooingDV firmware). Same family speaks the
