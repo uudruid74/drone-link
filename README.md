@@ -56,8 +56,9 @@ Protocol sources (reverse-engineered):
 
 The build artifacts are in the repo so you can grab them directly:
 
-- **APK:** [`dist/dronelink-debug.apk`](dist/dronelink-debug.apk) — install on
-  the phone. (Raw: `https://raw.githubusercontent.com/uudruid74/drone-link/main/dist/dronelink-debug.apk`)
+- **APK (v0.6.13 — latest):** [`dist/dronelink-debug.apk`](dist/dronelink-debug.apk)
+  — install on the phone. (Raw:
+  `https://raw.githubusercontent.com/uudruid74/drone-link/main/dist/dronelink-debug.apk`)
 - **sing-box config:** [`config/sing-box-drone-gateway.json`](config/sing-box-drone-gateway.json)
   — the SFA profile that makes the phone a tailnet node and split-tunnels the
   drone subnet.
@@ -129,6 +130,28 @@ Content-Type: application/json
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status"}}
 ```
 
+## Snapshot & video feed
+
+The camera is **on the drone** (`rtsp://192.168.1.1:7070/webcam`, MJPEG over
+RTSP). Two MCP surfaces expose it:
+
+- **`snapshot`** — returns the latest complete JPEG frame, base64-encoded:
+  ```json
+  {"ok": true, "size": 11632, "jpeg_base64": "<base64>"}
+  ```
+  Decode the **`jpeg_base64`** field (⚠️ *not* `image` — a script that checks for
+  `image` silently writes nothing). This is the ground-truth way to confirm what
+  the drone sees: it's a real, decodable frame.
+- **`video_url`** — the proxied MJPEG FPV stream URL (the app's RTSP→MJPEG proxy
+  serves on `:8080`; `video_url` returns the exact address for a browser/VLC).
+
+```bash
+# grab a frame
+curl -s -X POST http://<phone-tailnet-ip>:8000/mcp \
+  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"snapshot"}}'
+```
+
 ## MCP tools
 
 | Tool | Purpose |
@@ -138,6 +161,7 @@ Content-Type: application/json
 | `land` | auto-land |
 | `emergency_land` | e-stop + 4s neutral-lock (kill switch; stops the server) |
 | `fly_home` | Return-to-Home |
+| `hover(enable, throttle?)` | **altitude-hold toggle (WIP)** — sustains throttle + camera-feedback stabilization; see [Hover mode](#hover-mode-altitude-hold-wip) |
 | `fly(roll,pitch,throttle,yaw)` | raw sticks, -1..1 |
 | `trajectory(waypoints)` | timed flight script at 25 Hz (the AI control surface) |
 | `stop_trajectory` | clear script → neutral |
@@ -157,6 +181,33 @@ Cheap WiFi FPV has too much latency for real-time joystick control from an agent
 agent plots a path once (a timed sequence of stick values) and the drone
 executes it autonomously. No latency loop, no joystick. The MCP's `trajectory()`
 uploads the script and the drone flies it.
+
+## Hover mode (altitude hold, WIP)
+
+`hover` is a **WIP altitude-hold toggle** modelled on the vendor's "Fixed Height"
+(H-pin) mode. When enabled, the control loop **sustains throttle** so the drone
+holds altitude instead of decaying to neutral — which on a cheap drone means
+*dropping*. It is **not** a true position hold (the 5-byte telemetry has no
+IMU/baro/GPS).
+
+- **`hover(enable: bool, throttle?: int)`** — `enable` toggles it on/off;
+  `throttle` (0–127, default **64** = vendor H-pin center) tunes the hold
+  strength for flight tests.
+- **Stabilization is camera-feedback:** the loop derives a motion signal from
+  frame-difference between consecutive frames and runs a (P)D controller to
+  correct vertical bob (~10 Hz cadence, per-second velocity).
+- **Overrides:** any `land` / `emergency_land` / `fly_home` pulse, and the kill
+  gate, always win over an active hover.
+- **Verification:** altitude hold is confirmed by camera **motion** (stable at
+  altitude = holding). The telemetry itself cannot confirm flight.
+
+**Status — 2026-11-24 flight test:** the hover lifted cleanly (~6 ft) and produced
+the **most controlled flight so far** — stable heading, no chaotic back/sideways
+wobble. But it **translated straight forward** rather than station-keeping (it
+cruised toward the back fence). So: **vertical + heading hold work; forward-
+velocity cancellation is not yet implemented.** That's the next tuning target, and
+the control thresholds are still largely guessed — fine-tune after forward
+correction lands. Treat hover as experimental; keep a hand on `emergency_land`.
 
 ## Build
 
@@ -221,15 +272,25 @@ Verified on live drone WiFi (`8K_20505f`) with build `9e77a58`:
 
 ## Known issues (open)
 
-- **Corrupt snapshot frames** — the MJPEG/RTP reassembly produced malformed
-  JPEGs (valid `FFD8` SOI but no APP0 header, raw entropy bytes). Root cause was
-  RFC 2435 depacketization (MJPEG-over-RTP puts an 8-byte JPEG header at the
-  start of every packet). Fixed in `7367573` by reassembling fragments by byte
-  offset and emitting only complete frames. Re-verify the snapshot once the
-  battery is charged.
-- **Drone drift** — no position/IMU data in the 5-byte TC status, so there's no
-  closed-loop position hold. Calibration + trim reduces but doesn't eliminate
-  sideways drift; it's inherent to the airframe.
+- **Hover forward drift (WIP)** — the new hover mode holds altitude and heading
+  via camera-feedback stabilization, but does **not** yet cancel horizontal
+  **forward** velocity: in the 2026-11-24 flight test the drone lifted cleanly
+  (~6 ft) and flew in a straight line forward (toward the back fence) instead of
+  station-keeping. Vertical + yaw hold work; forward correction is the next
+  target, and the PID thresholds are still guessed (fine-tune after forward
+  correction lands). See [Hover mode](#hover-mode-altitude-hold-wip).
+- **Drone drift / no position hold** — the 5-byte TC status carries **no
+  IMU / baro / GPS / position** fields, so there is no true closed-loop position
+  hold. Hover is an *altitude/heading* hold built from camera frame-diff, not a
+  position fix. Calibration + trim reduce but don't eliminate drift; some drift
+  is inherent to the airframe.
+
+### Resolved
+
+- **Corrupt snapshot frames** — was MJPEG/RTP reassembly producing malformed
+  JPEGs (valid SOI, no APP0, raw entropy). Fixed (`7367573` + the RFC 2435
+  per-packet header strip): the frame is now a valid decodable JPEG, and
+  `snapshot` returns real frames — see [Snapshot & video feed](#snapshot--video-feed).
 
 ## Debug log access
 
